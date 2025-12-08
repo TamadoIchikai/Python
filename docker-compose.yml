@@ -1,0 +1,34 @@
+services:
+  cupy_dev:
+    build:
+      context: ./docker_Build
+      dockerfile: Dockerfile
+      args:
+        UID: "${UID}"
+        GID: "${GID}"
+
+    image: cupy_custom:v13.0.0
+    container_name: cupyDev
+    working_dir: /home/devuser
+
+    tty: true
+    stdin_open: true
+
+    user: "${UID}:${GID}"
+
+    environment:
+      - HOME=/home/devuser
+      - CUPY_CACHE_DIR=/home/devuser/.cupy_cache
+
+    # GPU (use device_requests or runtime fallback)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]
+
+    volumes:
+      - ./:/home/devuser:rw,z
+      - ./docker_Tmp/cupy_cache:/home/devuser/.cupy_cache:rw,z

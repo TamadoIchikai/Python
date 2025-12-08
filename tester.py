@@ -1,59 +1,35 @@
-# %%
-import numpy as np
-import PoE.lieTheory as lie
-import PoE.kinematics as kine
-import PoE.helper as helper
-# link 1 and link 2 length (along x axis)
-l1 = .35
-l2 = .45
-# link 1 and link 2 height (along z axis)
-d1 = .284
-d2 = .1
-d3 = .334 # prismatic joint max range
+import cupy as cp
 
-# link 1 and link 2 thickness
-a1 = .035
-b1 = .095
+def main():
+    # Check CuPy + CUDA
+    print("CuPy version:", cp.__version__)
+    print("CUDA available:", cp.cuda.runtime.getDeviceCount() > 0)
 
-a2 = .02
-b2 = .08
+    # Select device 0
+    cp.cuda.Device(0).use()
+    print("Using device:", cp.cuda.runtime.getDeviceProperties(0)["name"])
 
-# link 3 and link 4 radius
-r3 = 0.033
+    # Simple GPU array test
+    x = cp.arange(10, dtype=cp.float32)
+    y = cp.ones_like(x)
 
-# displacement of links compare to it's axis of rotation
-c1 = .05
-c2 = .08
+    z = x + y
 
-# Example angle
-theta_Pose = np.array([np.deg2rad(0),
-                        np.deg2rad(0),
-                        np.deg2rad(0), 
-                                    0])
+    print("x:", x)
+    print("y:", y)
+    print("z = x + y:", z)
 
-n = [3, -3] # prismatic joint 4 -z axis
+    # GPU → Host transfer
+    print("z (host):", z.get())
 
-q = np.array([[0,     l1,      l1+l2,      l1+l2],
-                [0,     0,       0,          0],
-                [0,     d1,      d1+d2,      d1+d2]])
-w = np.array([[0,     0,       0,       0],
-            [0,     0,       0,       0],
-            [1,     1,       1,       0]])
-# %%
-T = np.arange(16).reshape(4,4)
+    # Simple kernel: square elements
+    @cp.fuse()
+    def square(a):
+        return a * a
 
-R, p = helper.TransMatTo_Rp(T)
-print(R)
-print(p)
+    s = square(z)
+    print("square(z):", s)
 
-theta_Pose = np.array([np.deg2rad(0),
-                        np.deg2rad(0),
-                        np.deg2rad(0), 
-                                    0])
+if __name__ == "__main__":
+    main()
 
-thetaRun = theta_Pose.copy()
-print(thetaRun)
-thetaDotRun = np.zeros(thetaRun.size)
-print(thetaDotRun)
-a = helper.RpTo_TransMat(R, p)
-print(a)
