@@ -10,3 +10,6 @@ wheels/
 .venv
 .env_*
 docker_Tmp/
+.local/
+.cache/
+plots/

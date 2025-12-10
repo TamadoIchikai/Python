@@ -36,7 +36,7 @@ c2 = .08
 theta_Pose = np.array([np.deg2rad(0),
                         np.deg2rad(0),
                         np.deg2rad(0),
-                                0.0])
+                                0])
 
 theta_D= np.array([np.deg2rad(0),
                     np.deg2rad(0),
@@ -58,9 +58,10 @@ M = np.array([[1,     0,       0,       l1+l2],
                 [0,     0,       0,       1]])
 
 n_joint = theta_Pose.size
-
 S = lie.compute_ScrewMat(w,q,n)
-helper.validate_joint_inputs(q, w, M, S, theta_Pose)
+
+print(kine.PoE_transform(S, M, theta_Pose))
+# helper.validate_joint_inputs(q, w, M, S, theta_Pose)
 # %% Dynamics
 Ftip = np.array([0,0,0,0,0,0], dtype=np.float32)
 m1, m2, m3, m4 = 3, 2, 1.5, 1.5 #kg
@@ -111,7 +112,7 @@ GList[:,:,1] = helper.mcI(m2, f2, I2CoM)
 GList[:,:,2] = helper.mcI(m3, f3, I3CoM)
 GList[:,:,3] = helper.mcI(m4, f4, I4CoM)
 
-helper.validate_Dynamics_Inputs(Ftip, g, MList, GList, theta_Pose)
+# helper.validate_Dynamics_Inputs(Ftip, g, MList, GList, theta_Pose)
 # %% testing 
 # thetaDotTest = np.array([1, 2, 2, .2])
 # thetaDotDotTest = np.array([1, 2, 2, .2])
@@ -121,7 +122,7 @@ helper.validate_Dynamics_Inputs(Ftip, g, MList, GList, theta_Pose)
 # print(FD)
 # print(ID)
 # %% Some inverse kinematic
-SAMPLE_TIME = 0.001
+SAMPLE_TIME = 0.0001
 TIME_STOP = 60
 
 N = 100
@@ -236,7 +237,7 @@ posInput_log = np.array(posInput_log)
 posOutput_log = np.array(posOutput_log)
 
 # %% 
-helper.plot_Continuous(posInput_log, posOutput_log, tVec, extras={'torqueEffort': torque_log, 'thetaDotDot': thetaDotDot_Log}, figsize=(20,14))
+helper.plot_Continuous(posInput_log, posOutput_log, tVec, extras={'torqueEffort': torque_log, 'thetaDotDot': thetaDotDot_Log}, figsize=(20,14), save_path="plots/output.png")
 
 # run profiler
 # import line_profiler as profiler
