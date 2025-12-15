@@ -184,8 +184,6 @@ for i in range(n_steps):
     R_traj, pos_traj, k = traj_state.tic_tac_toe(M, T_d, randomList, t)
     T_traj = helper.RpTo_TransMat(R_traj, pos_traj)
 
-    # ...existing code...
-
     Vs = kine.twist_Error(Tsb, T_traj)
 
     Vs_WzXY = Vs[2:5].copy()
