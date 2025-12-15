@@ -1,5 +1,39 @@
 import numpy as np
+from numba import njit
 import PoE.helper as helper
+
+@njit(cache=True)
+def pid_update(error, I_prev, prev_error, Kp, Ki, Kd, Ts, Kb, outputLimit_low, outputLimit_high, has_limit):
+    """
+    JIT-compiled PID update function.
+    
+    Returns: u_clipped, I_new, prev_error_new
+    """
+    # Update integral
+    if Ki > 0:
+        I_new = helper.discrete_Integrator(I_prev, error, Ts)
+    else:
+        I_new = I_prev.copy()
+    
+    # Derivative term
+    d_err = helper.discrete_Derivative(prev_error, error, Ts)
+    
+    # PID output
+    u = Kp * error + Ki * I_new + Kd * d_err
+    
+    # Apply output limits
+    if has_limit:
+        u_clipped = np.clip(u, outputLimit_low, outputLimit_high)
+    else:
+        u_clipped = u.copy()
+    
+    # Anti-windup correction
+    if Ki > 0 and has_limit:
+        aw_term = Kb * (u_clipped - u)
+        I_new = I_new + aw_term
+    
+    return u_clipped, I_new, error.copy()
+
 
 class PID_Discrete:
     def __init__(
@@ -15,19 +49,20 @@ class PID_Discrete:
     ):
         """
         PID controller with anti-windup, back calculation, and initial state input.
-        Kp: proportional constant
-        Ki: integral constant
-        Kd: derivative constant
-        Ts: sample time
-        outputLimit: tuple (lower bound, upper bound)
-        Kb: back calculation strength, default = 1/(sqrt(Ki*Kd))
-        initial_state: initial error (or input) used for the integral and previous error states
         """
-        self.Kp = Kp
-        self.Ki = Ki
-        self.Kd = Kd
-        self.Ts = Ts
-        self.outputLimit = outputLimit
+        self.Kp = float(Kp)
+        self.Ki = float(Ki)
+        self.Kd = float(Kd)
+        self.Ts = float(Ts)
+        
+        if outputLimit is not None:
+            self.outputLimit_low = float(outputLimit[0])
+            self.outputLimit_high = float(outputLimit[1])
+            self.has_limit = True
+        else:
+            self.outputLimit_low = 0.0
+            self.outputLimit_high = 0.0
+            self.has_limit = False
 
         if Kb is None:
             if Ki > 0 and Kd > 0:
@@ -35,50 +70,36 @@ class PID_Discrete:
             else:
                 self.Kb = 1.0
         else:
-            self.Kb = Kb
+            self.Kb = float(Kb)
 
-        # integral state (I stores the time-summed error: I_k = sum_{j<=k} error_j * Ts)
         if initial_integral is not None:
-            self._I = np.asarray(initial_integral, dtype=float).copy()
+            self._I = np.asarray(initial_integral, dtype=np.float64).ravel()
         else:
             self._I = None
 
-        # previous error for derivative calculation
         if initial_prev_error is not None:
-            self._prev_error = np.asarray(initial_prev_error, dtype=float).copy()
+            self._prev_error = np.asarray(initial_prev_error, dtype=np.float64).ravel()
         else:
             self._prev_error = None
+        
+        self._initialized = False
 
     def update(self, error):
-        error = np.asarray(error, dtype=float)
+        error = np.asarray(error, dtype=np.float64).ravel()
 
-        # initialize states on first call if they were not set by initial_state
+        # Initialize states on first call
         if self._I is None:
-            self._I = np.zeros_like(error, dtype=float)
+            self._I = np.zeros_like(error, dtype=np.float64)
         if self._prev_error is None:
             self._prev_error = error.copy()
 
-        if self.Ki > 0:
-            self._I = helper.discrete_Integrator(self._I, error, self.Ts)
+        u_clipped, self._I, self._prev_error = pid_update(
+            error, self._I, self._prev_error,
+            self.Kp, self.Ki, self.Kd, self.Ts, self.Kb,
+            self.outputLimit_low, self.outputLimit_high, self.has_limit
+        )
 
-        # derivative term
-        d_err = helper.discrete_Derivative(self._prev_error, error, self.Ts)
-
-        # PID: compute (may be saturated below)
-        u = self.Kp * error + self.Ki * self._I + self.Kd * d_err
-        
-        # Apply output limits (clamp, for anti-windup)
-        if self.outputLimit is not None:
-            u_clipped = np.clip(u, self.outputLimit[0], self.outputLimit[1])
-        else:
-            u_clipped = u
-
-        # Anti-windup correction for integral (back calculation)
-        if self.Ki > 0 and self.outputLimit is not None:
-            aw_term = self.Kb * (u_clipped - u)
-            self._I += aw_term
-
-        # store for next iteration
-        self._prev_error = error.copy()
-
+        # Return scalar if input was scalar-like
+        if u_clipped.size == 1:
+            return u_clipped[0]
         return u_clipped

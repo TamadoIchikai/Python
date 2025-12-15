@@ -1,15 +1,13 @@
 # Python-generated files
 __pycache__/
 *.py[oc]
-build/
 dist/
 wheels/
 *.egg-info
 
 # Virtual environments
+build/
+!build/docker_Build/
 .venv
 .env_*
-docker_Tmp/
-.local/
-.cache/
 plots/

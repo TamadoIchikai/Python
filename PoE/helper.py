@@ -1,68 +1,99 @@
-import PoE.lieTheory as lie
 import numpy as np
+from numba import njit, prange
 import matplotlib.pyplot as plt
 
 tol = 1e-5
 
-discrete_Integrator = lambda x_prev, u, Ts: x_prev + Ts * u
-"""
+@njit(cache=True)
+def discrete_Integrator(x_prev, u, Ts):
+    """
     Stateless integrator (forward Euler).
     x_prev: numpy array shape (n,) or scalar
     u: numpy array same shape as x_prev or scalar
     Ts: sample time (scalar)
     returns x_next with same shape as x_prev
-"""
-discrete_Derivative = lambda x_prev, x_curr, Ts: (x_curr - x_prev) / Ts
-"""
+    """
+    return x_prev + Ts * u
+
+@njit(cache=True)
+def discrete_Derivative(x_prev, x_curr, Ts):
+    """
     Stateless discrete derivative (backward Euler).
     x_prev: numpy array shape (n,) or scalar  (state at k-1)
     x_curr: numpy array same shape           (state at k)
     Ts: sample time (scalar)
     returns derivative estimate x_dot with same shape
-"""
+    """
+    return (x_curr - x_prev) / Ts
 
-TransMatTo_Rp = lambda T: (T[:3, :3], T[:3, 3].reshape(3, 1))
-"""
+@njit(cache=True)
+def TransMatTo_Rp(T):
+    """
     T: 4x4 transformation matrix
     
     return: 3x3 orientation matrix R and 3x1 translation matrix p 
-"""    
+    """
+    R = T[:3, :3].copy()
+    p = T[:3, 3].copy()
+    return R, p
 
-RpTo_TransMat = lambda R, p: np.vstack([np.hstack([R, np.asarray(p).reshape(3, 1)]), np.hstack([np.zeros(3), [1]])])
-"""
+@njit(cache=True)
+def RpTo_TransMat(R, p):
+    """
     R: SO(3) orientation matrix
     p: 3x1 translation matrix
     
     return: SE(3)
-"""
+    """
+    result = np.zeros((4, 4), dtype=np.float64)
+    result[:3, :3] = R
+    p_flat = p.ravel()
+    result[0, 3] = p_flat[0]
+    result[1, 3] = p_flat[1]
+    result[2, 3] = p_flat[2]
+    result[3, 3] = 1.0
+    return result
 
-
-transInv_SE3 = lambda T: (
-    lambda R, p: np.vstack([
-        np.hstack([R.T, -R.T @ p]),
-        np.hstack([np.zeros((1, 3)), [[1]]])
-    ])
-)(*TransMatTo_Rp(T))
-"""Inverse a SE(3) matrix using transpose(SO(3)) matrix for more efficiency
+@njit(cache=True)
+def transInv_SE3(T):
+    """Inverse a SE(3) matrix using transpose(SO(3)) matrix for more efficiency
     T: SE(3) matrix
     
     return: inv(T)
-""" 
+    """
+    R = T[:3, :3].copy()
+    p = T[:3, 3].copy()
     
-vectorTo_angle = lambda omegaTheta: (
-    np.linalg.norm(omegaTheta),
-    np.zeros((3, 1)) if np.isclose(np.linalg.norm(omegaTheta), 0, atol=1e-5)
-    else (omegaTheta / np.linalg.norm(omegaTheta)).reshape(3, 1)
-)
-"""
+    R_T = R.T
+    p_new = -R_T @ p
+    
+    result = np.zeros((4, 4), dtype=np.float64)
+    result[:3, :3] = R_T
+    result[0, 3] = p_new[0]
+    result[1, 3] = p_new[1]
+    result[2, 3] = p_new[2]
+    result[3, 3] = 1.0
+    return result
+
+@njit(cache=True)
+def vectorTo_angle(omegaTheta):
+    """
     omegaTheta: 3x1 w .* theta
     
     return: 
         constant theta
         3x1 w hat
-"""
+    """
+    omegaTheta_flat = omegaTheta.ravel()
+    theta = np.sqrt(omegaTheta_flat[0]**2 + omegaTheta_flat[1]**2 + omegaTheta_flat[2]**2)
+    omegaHat = np.zeros(3, dtype=np.float64)
+    if theta > tol:
+        omegaHat[0] = omegaTheta_flat[0] / theta
+        omegaHat[1] = omegaTheta_flat[1] / theta
+        omegaHat[2] = omegaTheta_flat[2] / theta
+    return theta, omegaHat
 
-
+@njit(cache=True)
 def dls_inverse(J, lambda_val=1e-4):
     """
     Damped Least-Squares inverse of a Jacobian.
@@ -75,9 +106,7 @@ def dls_inverse(J, lambda_val=1e-4):
     Returns:
         J_inv : DLS inverse (n x m)
     """
-    # convert damping to scalar
     lam2 = lambda_val * lambda_val
-
     m, n = J.shape
 
     if m >= n:
@@ -91,43 +120,68 @@ def dls_inverse(J, lambda_val=1e-4):
 
     return J_inv
 
+@njit(cache=True)
+def vectorTo_so3(v):
+    """
+    vector: 3x1 vector
+    
+    return: skew symmetric matrix representation of input vector
+    """
+    v_flat = v.ravel()
+    result = np.zeros((3, 3), dtype=np.float64)
+    result[0, 1] = -v_flat[2]
+    result[0, 2] = v_flat[1]
+    result[1, 0] = v_flat[2]
+    result[1, 2] = -v_flat[0]
+    result[2, 0] = -v_flat[1]
+    result[2, 1] = v_flat[0]
+    return result
+
+@njit(cache=True)
 def mcI(m, c, I):
     """Compute 6x6 inertia space matrix including parallel axis acounted for offset from CoM
-        m: link's weight
-        c: displacement from CoM to rotation axis relative to it's frame
-        I: 3x3 rotational inertia about CoM
-        
-        return: 6x6 spatial inertia matrix
-    """
-    cHat = lie.vectorTo_so3(c)
-    return np.vstack([np.hstack([I + m*(cHat@cHat.T), m*cHat]), np.hstack([-m*cHat, m*np.eye(3,3)])])
+    m: link's weight
+    c: displacement from CoM to rotation axis relative to it's frame
+    I: 3x3 rotational inertia about CoM
     
+    return: 6x6 spatial inertia matrix
+    """
+    cHat = vectorTo_so3(c)
+    cHat_cHatT = cHat @ cHat.T
+    
+    result = np.zeros((6, 6), dtype=np.float64)
+    result[:3, :3] = I + m * cHat_cHatT
+    result[:3, 3:6] = m * cHat
+    result[3:6, :3] = -m * cHat
+    result[3:6, 3:6] = m * np.eye(3, dtype=np.float64)
+    return result
 
+# Validation functions - not JIT compiled as they're for debugging
 def validate_theta_Pose(theta_Pose):
-    theta_Pose = np.asarray(theta_Pose, dtype=np.float32).ravel()
+    theta_Pose = np.asarray(theta_Pose, dtype=np.float64).ravel()
     n_joint = theta_Pose.size
     return theta_Pose, n_joint
 
 def validate_q(q, n_joint):
-    q = np.asarray(q, dtype=np.float32)
+    q = np.asarray(q, dtype=np.float64)
     if q.shape != (3, n_joint):
         raise ValueError(f"q must be shape (3, {n_joint}), got {q.shape}")
     return q
 
 def validate_w(w, n_joint):
-    w = np.asarray(w, dtype=np.float32)
+    w = np.asarray(w, dtype=np.float64)
     if w.shape != (3, n_joint):
         raise ValueError(f"w must be shape (3, {n_joint}), got {w.shape}")
     return w
 
 def validate_M(M):
-    M = np.asarray(M, dtype=np.float32)
+    M = np.asarray(M, dtype=np.float64)
     if M.shape != (4, 4):
         raise ValueError(f"M must be shape (4, 4), got {M.shape}")
     return M
 
 def validate_S(S, n_joint):
-    S = np.asarray(S, dtype=np.float32)
+    S = np.asarray(S, dtype=np.float64)
     if S.shape != (6, n_joint):
         raise ValueError(f"S must be shape (6, {n_joint}), got {S.shape}")
     return S
@@ -141,31 +195,31 @@ def validate_joint_inputs(q, w, M, S, theta_Pose):
     return q, w, M, S, theta_Pose
 
 def validate_Ftip(Ftip):
-    Ftip = np.asarray(Ftip, dtype=np.float32).ravel()
+    Ftip = np.asarray(Ftip, dtype=np.float64).ravel()
     if Ftip.shape != (6,):
         raise ValueError(f"Ftip must be shape (6,), got {Ftip.shape}")
     return Ftip
 
 def validate_g(g):
-    g = np.asarray(g, dtype=np.float32).ravel()
+    g = np.asarray(g, dtype=np.float64).ravel()
     if g.shape != (3,):
         raise ValueError(f"g must be shape (3,), got {g.shape}")
     return g
 
 def validate_MList(MList, n_joint):
-    MList = np.asarray(MList, dtype=np.float32)
+    MList = np.asarray(MList, dtype=np.float64)
     if MList.shape != (4, 4, n_joint+1):
         raise ValueError(f"MList must be shape (4, 4, {n_joint+1}), got {MList.shape}")
     return MList
 
 def validate_GList(GList, n_joint):
-    GList = np.asarray(GList, dtype=np.float32)
+    GList = np.asarray(GList, dtype=np.float64)
     if GList.shape != (6, 6, n_joint):
         raise ValueError(f"GList must be shape (6, 6, {n_joint}), got {GList.shape}")
     return GList
 
 def validate_Dynamics_Inputs(Ftip, g, MList, GList, theta_Pose):
-    theta_Pose = np.asarray(theta_Pose, dtype=np.float32).ravel()
+    theta_Pose = np.asarray(theta_Pose, dtype=np.float64).ravel()
     n_joint = theta_Pose.size
     Ftip = validate_Ftip(Ftip)
     g = validate_g(g)
@@ -181,7 +235,6 @@ def plot_Continuous(posInput_log, posOutput_log, tVec, extras=None,
     if extras is None:
         extras = {}
     else:
-        # accept lists as well — convert values to arrays
         extras = {k: np.asarray(v) for k, v in extras.items()}
 
     lengths = [len(tVec), len(posInput_log), len(posOutput_log)]
@@ -237,7 +290,6 @@ def plot_Continuous(posInput_log, posOutput_log, tVec, extras=None,
     fig = plt.figure(figsize=figsize)
     gs = fig.add_gridspec(total_rows, total_cols, hspace=1.0, wspace=0.35)
 
-    # Base 6 plots
     ax1 = fig.add_subplot(gs[0, 0])
     ax1.plot(t, xin, label="xin")
     ax1.plot(t, xout, label="xout")
@@ -284,4 +336,3 @@ def plot_Continuous(posInput_log, posOutput_log, tVec, extras=None,
     if save_path:
         fig.savefig(save_path, bbox_inches="tight")
     return None
-
