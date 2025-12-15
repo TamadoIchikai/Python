@@ -122,7 +122,7 @@ GList[:,:,3] = helper.mcI(m4, f4, I4CoM)
 # print(FD)
 # print(ID)
 # %% Some inverse kinematic
-SAMPLE_TIME = 0.0001
+SAMPLE_TIME = 0.001
 TIME_STOP = 60
 
 N = 100
