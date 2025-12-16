@@ -13,11 +13,14 @@ from PoE.optimizer import GBO
 
 def simulation_cost_ITAE(pid_params: np.ndarray, sim_config: dict) -> float:
     """
-    Cost function for PID optimization using ITAE (Integral Time-weighted Absolute Error).
+    Cost function for PID optimization using improved ITAE.
     
-    ITAE = integral(t * |e(t)|) dt
+    Improvements:
+    1. Time-offset ITAE: Only count after trajectory starts (t >= 2s)
+    2. Step-change tracking: Weight errors after each trajectory step change
+    3. ISE component: Better transient response sensitivity
     
-    Final cost = ITAE_x + ITAE_y
+    Final cost = ISE_total + weight * ITAE_total
     
     Parameters:
     -----------
@@ -29,7 +32,7 @@ def simulation_cost_ITAE(pid_params: np.ndarray, sim_config: dict) -> float:
     Returns:
     --------
     cost : float
-        ITAE cost value (lower is better)
+        Combined cost value (lower is better)
     """
     # Unpack PID parameters
     Kp1, Kd1, Kp2, Kd2 = pid_params[0], pid_params[1], pid_params[2], pid_params[3]
@@ -88,9 +91,21 @@ def simulation_cost_ITAE(pid_params: np.ndarray, sim_config: dict) -> float:
     
     traj_state = trajGen.TrajectoryState()
     
-    # ITAE accumulators
+    # Cost accumulators
     ITAE_x = 0.0
     ITAE_y = 0.0
+    ISE_x = 0.0
+    ISE_y = 0.0
+    
+    # Step-change tracking
+    prev_k = -1
+    step_start_time = 2.0  # Trajectory starts at t=2s
+    step_ISE_x = 0.0
+    step_ISE_y = 0.0
+    step_cost = 0.0
+    
+    # Trajectory start time
+    TRAJ_START = 2.0
     
     for i in range(n_steps):
         t = i * SAMPLE_TIME
@@ -149,15 +164,52 @@ def simulation_cost_ITAE(pid_params: np.ndarray, sim_config: dict) -> float:
         
         Tsb = kine.PoE_transform(S, M, thetaRun_Actual)
         
-        # Compute ITAE: t * |error|
-        error_x = np.abs(pos_traj[0] - Tsb[0, 3])
-        error_y = np.abs(pos_traj[1] - Tsb[1, 3])
+        # Compute position errors
+        error_x = pos_traj[0] - Tsb[0, 3]
+        error_y = pos_traj[1] - Tsb[1, 3]
         
-        ITAE_x += t * error_x * SAMPLE_TIME
-        ITAE_y += t * error_y * SAMPLE_TIME
+        # Only compute cost after trajectory starts
+        if t >= TRAJ_START:
+            # Detect step change (new trajectory point)
+            if k != prev_k and prev_k >= 0:
+                # Add accumulated step error to total
+                step_cost += step_ISE_x + step_ISE_y
+                step_ISE_x = 0.0
+                step_ISE_y = 0.0
+                step_start_time = t
+            
+            # Time since trajectory started (for ITAE)
+            t_offset = t - TRAJ_START
+            
+            # Time since last step change (for step-weighted error)
+            t_since_step = t - step_start_time
+            
+            # ITAE with time offset
+            ITAE_x += t_offset * np.abs(error_x) * SAMPLE_TIME
+            ITAE_y += t_offset * np.abs(error_y) * SAMPLE_TIME
+            
+            # ISE for transient response
+            ISE_x += error_x**2 * SAMPLE_TIME
+            ISE_y += error_y**2 * SAMPLE_TIME
+            
+            # Step-weighted ISE (emphasizes settling after each step change)
+            step_ISE_x += t_since_step * (error_x**2) * SAMPLE_TIME
+            step_ISE_y += t_since_step * (error_y**2) * SAMPLE_TIME
+        
+        prev_k = k
     
-    # Final cost = ITAE_x + ITAE_y
-    cost = ITAE_x + ITAE_y
+    # Add final step error
+    step_cost += step_ISE_x + step_ISE_y
+    
+    # Combined cost function:
+    # - ISE: Good for transient response
+    # - ITAE: Good for settling time
+    # - Step cost: Emphasizes settling after each trajectory change
+    w_ise = 1.0       # Weight for ISE
+    w_itae = 0.1      # Weight for ITAE (smaller since values are larger)
+    w_step = 0.5      # Weight for step-change settling
+    
+    cost = w_ise * (ISE_x + ISE_y) + w_itae * (ITAE_x + ITAE_y) + w_step * step_cost
     
     return cost
 
@@ -234,19 +286,19 @@ def setup_simulation_config():
     GList[:,:,2] = helper.mcI(m3, f3, I3CoM)
     GList[:,:,3] = helper.mcI(m4, f4, I4CoM)
     
-    # Simulation parameters - reduced for faster optimization
+    # Simulation parameters
     SAMPLE_TIME = 0.001
-    TIME_STOP = 10.0  # Reduced from 30s for faster evaluation
+    TIME_STOP = 15.0  # Cover multiple trajectory steps (each step is ~3s after t=2s)
     n_steps = int(TIME_STOP / SAMPLE_TIME)
     
     wLim = np.array([1, 2, 2, .2], dtype=np.float64)
     tauLim = np.array([20, 15, 5, 20], dtype=np.float64)
     
-    # Random trajectory
+    # Random trajectory - fixed seed for reproducibility
     N = 100
     all_points = np.array([[x, y] for x in range(3) for y in range(3)], dtype=np.int64)
     randomList = []
-    np.random.seed(42)  # Fixed seed for reproducibility
+    np.random.seed(42)
     while len(randomList) < N:
         shuffled = all_points[np.random.permutation(9)]
         randomList.append(shuffled)
@@ -270,26 +322,57 @@ def setup_simulation_config():
     }
 
 
+def test_single_evaluation(pid_params, sim_config):
+    """Test a single cost evaluation and print diagnostic info."""
+    print("\n" + "="*60)
+    print("DIAGNOSTIC: Single Cost Evaluation")
+    print("="*60)
+    print(f"PID Params: Kp1={pid_params[0]:.2f}, Kd1={pid_params[1]:.2f}, "
+          f"Kp2={pid_params[2]:.2f}, Kd2={pid_params[3]:.2f}")
+    
+    start = time.perf_counter()
+    cost = simulation_cost_ITAE(pid_params, sim_config)
+    elapsed = time.perf_counter() - start
+    
+    print(f"Cost: {cost:.6f}")
+    print(f"Evaluation time: {elapsed:.2f}s")
+    print("="*60 + "\n")
+    return cost
+
+
 if __name__ == "__main__":
     # Setup simulation config
     sim_config = setup_simulation_config()
     
+    # Test with default parameters first
+    default_params = np.array([100.0, 30.0, 80.0, 40.0], dtype=np.float64)
+    print("Testing default PID parameters...")
+    default_cost = test_single_evaluation(default_params, sim_config)
+    
+    # Test with different parameters to verify cost sensitivity
+    test_params = np.array([150.0, 50.0, 120.0, 60.0], dtype=np.float64)
+    print("Testing alternative PID parameters...")
+    test_cost = test_single_evaluation(test_params, sim_config)
+    
+    print(f"Cost difference: {abs(default_cost - test_cost):.6f} "
+          f"({abs(default_cost - test_cost) / default_cost * 100:.2f}%)")
+    
     # GBO parameters
-    nP = 16         # Population size (use power of 2 for better parallelization)
-    MaxIt = 30      # Maximum iterations
+    nP = 16         # Population size
+    MaxIt = 500     # Reduced iterations - should converge faster with better cost function
     dim = 4         # Number of variables: [Kp1, Kd1, Kp2, Kd2]
     
-    # Bounds for PID parameters
-    lb = np.array([10.0, 1.0, 10.0, 1.0], dtype=np.float64)
-    ub = np.array([500.0, 200.0, 500.0, 200.0], dtype=np.float64)
+    # Tighter bounds based on typical PID values for robotic systems
+    lb = np.array([50.0, 10.0, 50.0, 10.0], dtype=np.float64)
+    ub = np.array([1000.0, 300.0, 1000.0, 300.0], dtype=np.float64)
     
     print("="*60)
-    print("PID Optimization with GBO using ITAE Cost Function")
+    print("PID Optimization with GBO - Improved Cost Function")
     print("="*60)
     print(f"Population: {nP}, Iterations: {MaxIt}")
     print(f"Optimizing: Kp1, Kd1, Kp2, Kd2")
     print(f"Bounds: lb={lb}, ub={ub}")
-    print(f"Cost function: ITAE_x + ITAE_y")
+    print(f"Cost function: ISE + 0.1*ITAE + 0.5*StepCost")
     print(f"Simulation time: {sim_config['n_steps'] * sim_config['SAMPLE_TIME']:.1f}s")
     print(f"CPU cores available: {os.cpu_count()}")
     print("="*60)
@@ -309,7 +392,8 @@ if __name__ == "__main__":
     print("OPTIMIZATION COMPLETE!")
     print("="*60)
     print(f"Total elapsed time: {end_time - start_time:.2f} seconds")
-    print(f"Best ITAE Cost: {Best_Cost:.6f}")
+    print(f"Best Cost: {Best_Cost:.6f}")
+    print(f"Improvement from default: {(default_cost - Best_Cost) / default_cost * 100:.2f}%")
     print(f"\nOptimized PID Parameters:")
     print(f"  PID_Torque_theta_1: Kp={Best_Params[0]:.4f}, Kd={Best_Params[1]:.4f}")
     print(f"  PID_Torque_theta_2: Kp={Best_Params[2]:.4f}, Kd={Best_Params[3]:.4f}")
@@ -319,18 +403,53 @@ if __name__ == "__main__":
     np.savez('pid_optimization_results.npz',
              Best_Cost=Best_Cost,
              Best_Params=Best_Params,
-             Convergence_curve=Convergence_curve)
+             Convergence_curve=Convergence_curve,
+             default_cost=default_cost,
+             default_params=default_params)
     
     # Plot convergence
     try:
         import matplotlib.pyplot as plt
-        plt.figure(figsize=(10, 6))
-        plt.plot(range(1, MaxIt + 1), Convergence_curve, 'b-o', linewidth=2, markersize=4)
-        plt.xlabel('Iteration')
-        plt.ylabel('Best ITAE Cost')
-        plt.title('GBO Convergence - PID Optimization')
-        plt.grid(True)
+        
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        
+        # Convergence plot
+        axes[0].plot(range(1, MaxIt + 1), Convergence_curve, 'b-', linewidth=2)
+        axes[0].axhline(y=default_cost, color='r', linestyle='--', label=f'Default: {default_cost:.4f}')
+        axes[0].set_xlabel('Iteration')
+        axes[0].set_ylabel('Best Cost')
+        axes[0].set_title('GBO Convergence - PID Optimization')
+        axes[0].grid(True)
+        axes[0].legend()
+        
+        # Convergence plot (log scale for better visibility)
+        axes[1].semilogy(range(1, MaxIt + 1), Convergence_curve, 'b-', linewidth=2)
+        axes[1].axhline(y=default_cost, color='r', linestyle='--', label=f'Default: {default_cost:.4f}')
+        axes[1].set_xlabel('Iteration')
+        axes[1].set_ylabel('Best Cost (log scale)')
+        axes[1].set_title('GBO Convergence (Log Scale)')
+        axes[1].grid(True)
+        axes[1].legend()
+        
+        plt.tight_layout()
         plt.savefig('convergence_plot.png', dpi=150, bbox_inches='tight')
         print("\nConvergence plot saved to 'convergence_plot.png'")
+        
     except Exception as e:
         print(f"Could not save plot: {e}")
+    
+    # Generate code snippet for main.py
+    print("\n" + "="*60)
+    print("Copy these lines to your main.py:")
+    print("="*60)
+    print(f"""
+# Optimized PID parameters from GBO
+PID_Torque_theta_1 = controller.PID_Discrete(
+    Kp={Best_Params[0]:.4f}, Ki=0.0, Kd={Best_Params[1]:.4f}, 
+    Ts=SAMPLE_TIME, outputLimit=(-tauLim[0], tauLim[0]), initial_integral=tauInit[0]
+)
+PID_Torque_theta_2 = controller.PID_Discrete(
+    Kp={Best_Params[2]:.4f}, Ki=0.0, Kd={Best_Params[3]:.4f}, 
+    Ts=SAMPLE_TIME, outputLimit=(-tauLim[1], tauLim[1]), initial_integral=tauInit[1]
+)
+""")
