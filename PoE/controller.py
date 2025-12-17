@@ -1,6 +1,8 @@
 import numpy as np
 from numba import njit
 import PoE.helper as helper
+from scipy.interpolate import RegularGridInterpolator
+import os
 
 class PID_Discrete:
     def __init__(
@@ -91,13 +93,19 @@ class FuzzySugeno:
         Y_kp, Y_kd = eval_grid(e_vec, de_vec, self.mfs_e, self.mfs_de, self.kp_const, self.kd_const)
         return e_vec, de_vec, Y_kp, Y_kd
 
-    def save_npz(self, path="FuzzySugeno_e_Theta1.npz", nE=1001, nDE=1001):
+    def save_npz(self, theta_N, fileNamePath, nE=1001, nDE=1001):
         e_vec, de_vec, Y_kp, Y_kd = self.evaluate(nE=nE, nDE=nDE)
-        np.savez(path,
-                 evec_Theta1=e_vec,
-                 devec_Theta1=de_vec,
-                 Ymat_dKp_Theta1=Y_kp,
-                 Ymat_dKd_Theta1=Y_kd)
+
+        np.savez(
+            fileNamePath,
+            **{
+                f"evec_Theta{theta_N}": e_vec,
+                f"devec_Theta{theta_N}": de_vec,
+                f"Ymat_dKp_Theta{theta_N}": Y_kp,
+                f"Ymat_dKd_Theta{theta_N}": Y_kd,
+            },
+        )
+        
 
 @njit(cache=True)
 def pid_update(error, I_prev, prev_error, Kp, Ki, Kd, Ts, Kb, outputLimit_low, outputLimit_high, has_limit):
@@ -193,4 +201,128 @@ def build_const_matrix(table, map_val):
         for j in range(7):
             out[i, j] = map_val[table[i][j]]
     return out
+
+
+class LookupTable2D:
+    """
+    2-D Lookup Table with linear interpolation and clip extrapolation.
+    Mimics MATLAB/Simulink's 2-D Lookup Table block.
+    """
+    def __init__(self, breakpoints1, breakpoints2, table_data):
+        """
+        Parameters
+        ----------
+        breakpoints1 : array-like
+            Breakpoints for first input (e.g., evec_Theta1). Shape: (M,)
+        breakpoints2 : array-like
+            Breakpoints for second input (e.g., devec_Theta1). Shape: (N,)
+        table_data : array-like
+            2-D table data. Shape: (N, M) where rows correspond to breakpoints2
+            and columns correspond to breakpoints1.
+        """
+        self.bp1 = np.asarray(breakpoints1).ravel()
+        self.bp2 = np.asarray(breakpoints2).ravel()
+        self.table = np.asarray(table_data)
+        
+        # Create interpolator with linear method and clipping bounds
+        # Note: RegularGridInterpolator expects table shape to match (len(bp2), len(bp1))
+        self._interp = RegularGridInterpolator(
+            (self.bp2, self.bp1),  # (rows, cols) = (de, e)
+            self.table,
+            method='linear',
+            bounds_error=False,
+            fill_value=None  # Use nearest for extrapolation
+        )
+    
+    def __call__(self, u1, u2):
+        """
+        Evaluate the lookup table.
+        
+        Parameters
+        ----------
+        u1 : float or array-like
+            First input (corresponds to breakpoints1, e.g., e_theta)
+        u2 : float or array-like
+            Second input (corresponds to breakpoints2, e.g., de_theta)
+        
+        Returns
+        -------
+        float or ndarray
+            Interpolated output value(s)
+        """
+        u1 = np.asarray(u1)
+        u2 = np.asarray(u2)
+        
+        # Clip inputs to breakpoint ranges (extrapolation = clip)
+        u1_clipped = np.clip(u1, self.bp1[0], self.bp1[-1])
+        u2_clipped = np.clip(u2, self.bp2[0], self.bp2[-1])
+        
+        # Handle scalar vs array inputs
+        scalar_input = u1.ndim == 0 and u2.ndim == 0
+        
+        if scalar_input:
+            pts = np.array([[u2_clipped, u1_clipped]])
+        else:
+            u1_clipped = np.atleast_1d(u1_clipped)
+            u2_clipped = np.atleast_1d(u2_clipped)
+            pts = np.column_stack([u2_clipped.ravel(), u1_clipped.ravel()])
+        
+        result = self._interp(pts)
+        
+        if scalar_input:
+            return float(result[0])
+        return result.reshape(u1.shape) if u1.ndim > 0 else result.reshape(u2.shape)
+
+
+class FuzzyLookupController:
+    """
+    Controller using pre-computed fuzzy lookup tables for dKp and dKd.
+    """
+    def __init__(self, npz_path):
+        """
+        Load lookup tables from .npz file.
+        
+        Parameters
+        ----------
+        npz_path : str
+            Path to .npz file containing evec, devec, Ymat_dKp, Ymat_dKd
+        """
+        data = np.load(npz_path)
+        
+        # Detect key naming convention
+        keys = list(data.keys())
+        
+        # Find evec and devec keys
+        evec_key = [k for k in keys if 'evec' in k.lower()][0]
+        devec_key = [k for k in keys if 'devec' in k.lower()][0]
+        dkp_key = [k for k in keys if 'dkp' in k.lower()][0]
+        dkd_key = [k for k in keys if 'dkd' in k.lower()][0]
+        
+        evec = data[evec_key]
+        devec = data[devec_key]
+        Ymat_dKp = data[dkp_key]
+        Ymat_dKd = data[dkd_key]
+        
+        self.lut_dKp = LookupTable2D(evec, devec, Ymat_dKp)
+        self.lut_dKd = LookupTable2D(evec, devec, Ymat_dKd)
+    
+    def get_gains(self, e, de):
+        """
+        Get dKp and dKd for given error and error derivative.
+        
+        Parameters
+        ----------
+        e : float or array-like
+            Error value(s)
+        de : float or array-like
+            Error derivative value(s)
+        
+        Returns
+        -------
+        tuple
+            (dKp, dKd) values
+        """
+        dKp = self.lut_dKp(e, de)
+        dKd = self.lut_dKd(e, de)
+        return dKp, dKd
 

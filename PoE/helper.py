@@ -337,3 +337,46 @@ def plot_Continuous(posInput_log, posOutput_log, tVec, extras=None,
         fig.savefig(save_path, bbox_inches="tight")
     plt.show()
     return None
+
+def plot_3d_heatmaps(theta_N, npz_path, downsample=5):
+    data = np.load(npz_path)
+    e_key   = f"evec_Theta{theta_N}"
+    de_key  = f"devec_Theta{theta_N}"
+    dkp_key = f"Ymat_dKp_Theta{theta_N}"
+    dkd_key = f"Ymat_dKd_Theta{theta_N}"
+
+    evec = data[e_key]
+    devec = data[de_key]
+    Zkp = data[dkp_key]
+    Zkd = data[dkd_key]
+
+    EE, DD = np.meshgrid(evec, devec)  # shapes (nDE, nE)
+
+    # Downsample for faster plotting
+    s = max(1, int(downsample))
+    EE_s  = EE[::s, ::s]
+    DD_s  = DD[::s, ::s]
+    Zkp_s = Zkp[::s, ::s]
+    Zkd_s = Zkd[::s, ::s]
+
+    fig = plt.figure(figsize=(12, 5))
+
+    ax1 = fig.add_subplot(1, 2, 1, projection="3d")
+    surf1 = ax1.plot_surface(EE_s, DD_s, Zkp_s, cmap="viridis", edgecolor="none", antialiased=True)
+    ax1.set_title(f"dKp surface (Theta{theta_N})")
+    ax1.set_xlabel(f"e_theta{theta_N}")
+    ax1.set_ylabel(f"de_theta{theta_N}")
+    ax1.set_zlabel("dKp")
+    fig.colorbar(surf1, ax=ax1, shrink=0.6, pad=0.1, label="dKp")
+
+    ax2 = fig.add_subplot(1, 2, 2, projection="3d")
+    surf2 = ax2.plot_surface(EE_s, DD_s, Zkd_s, cmap="plasma", edgecolor="none", antialiased=True)
+    ax2.set_title(f"dKd surface (Theta{theta_N})")
+    ax2.set_xlabel(f"e_theta{theta_N}")
+    ax2.set_ylabel(f"de_theta{theta_N}")
+    ax2.set_zlabel("dKd")
+    fig.colorbar(surf2, ax=ax2, shrink=0.6, pad=0.1, label="dKd")
+
+    plt.tight_layout()
+    plt.show()
+

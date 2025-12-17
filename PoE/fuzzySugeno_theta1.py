@@ -1,5 +1,3 @@
-import numpy as np
-import matplotlib.pyplot as plt
 import PoE.controller as controller
 import PoE.helper as helper
 
