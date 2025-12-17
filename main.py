@@ -1,10 +1,9 @@
-# %% Libs
-import PoE.lieTheory as lie
 import PoE.kinematics as kine
 import PoE.helper as helper
 import PoE.dynamics as dyna
 import PoE.trajectoryGen as trajGen
 import PoE.controller as controller
+import PoE.lieTheory as lie
 
 import numpy as np
 import time
@@ -42,7 +41,7 @@ theta_Pose = np.array([np.deg2rad(0),
 theta_D= np.array([np.deg2rad(0),
                     np.deg2rad(0),
                     np.deg2rad(0),
-                                0], dtype=np.float64)
+                                0.4], dtype=np.float64)
 n = (3, -3) # prismatic joint 4 -z axis
 
 q = np.array([[0,     l1,      l1+l2,      l1+l2],
@@ -123,16 +122,8 @@ GList[:,:,3] = helper.mcI(m4, f4, I4CoM)
 
 # %% Some inverse kinematic
 SAMPLE_TIME = 0.001
-TIME_STOP = 60.0
+STOP_TIME = 30.0
 
-N = 100
-all_points = np.array([[x, y] for x in range(3) for y in range(3)], dtype=np.int64)
-randomList = []
-while len(randomList) < N:
-    shuffled = all_points[np.random.permutation(9)]
-    randomList.append(shuffled)
-
-randomList = np.vstack(randomList)[:N].astype(np.int64)
 
 # %% Looping time
 Tsb = kine.PoE_transform(S, M, theta_Pose)
@@ -160,20 +151,23 @@ PID_Torque_theta_4 = controller.PID_Discrete(Kp=40.0, Ki=20.0, Kd=30.0, Ts=SAMPL
 Vs_PID = np.zeros(6, dtype=np.float64)
 torqueEffort = np.zeros_like(thetaRun_IK)
 
-n_steps = int(TIME_STOP / SAMPLE_TIME)
+n_steps = int(STOP_TIME / SAMPLE_TIME)
 posInput_log = np.zeros((n_steps, 3), dtype=np.float64)
 posOutput_log = np.zeros((n_steps, 3), dtype=np.float64)
 torque_log = np.zeros((n_steps, thetaRun_IK.size), dtype=np.float64)
 thetaDotDot_Log = np.zeros((n_steps, thetaRun_IK.size), dtype=np.float64)
+tVec = []
 
-tVec = np.zeros(n_steps, dtype=np.float64)
-
-# Pre-allocate x/y/z lists for trajectory
-x_list = np.array([0.4, 0.5, 0.6], dtype=np.float64)
-y_list = np.array([0.1, 0.0, -0.1], dtype=np.float64)
-
-# Initialize trajectory state
-traj_state = trajGen.TrajectoryState()
+# Create trajectory manager
+traj = trajGen.TrajectoryGen(
+    M=M,
+    T_d=T_d,
+    startTime=2,
+    stepTimeXY=2,
+    stepTimeZ=5,
+    stopTime=STOP_TIME,
+    seed=3
+)
 
 counterFDynamic = []
 counterLoop_Start = time.perf_counter()
@@ -181,7 +175,8 @@ counterLoop_Start = time.perf_counter()
 for i in range(n_steps):
     t = i * SAMPLE_TIME
 
-    R_traj, pos_traj, k = traj_state.tic_tac_toe(M, T_d, randomList, t)
+    R_traj, pos_traj = traj.generate(t)
+
     T_traj = helper.RpTo_TransMat(R_traj, pos_traj)
 
     Vs = kine.twist_Error(Tsb, T_traj)
@@ -235,7 +230,7 @@ for i in range(n_steps):
 
     Tsb = kine.PoE_transform(S, M, thetaRun_Actual)
     
-    if (i%100) ==1:
+    if (i%1000) ==1:
         print("Ite", i)
 
     posInput_log[i, 0] = pos_traj[0]
@@ -252,13 +247,18 @@ for i in range(n_steps):
     thetaDotDot_Log[i, 1] = thetaDotDotRun_Actual[1]
     thetaDotDot_Log[i, 2] = thetaDotDotRun_Actual[2]
     thetaDotDot_Log[i, 3] = thetaDotDotRun_Actual[3]
-    tVec[i] = t
+    tVec.append(t)
 
 counterLoop_End = time.perf_counter()
-
+# After the simulation loop
+print("\nFirst 10 trajectory points:")
+for i in range(0, min(10000, n_steps), 1000):
+    t =tVec[i]
+    print(f"t={t:.3f}s: ref=({posInput_log[i,0]:.3f}, {posInput_log[i,1]:.3f}), "
+          f"actual=({posOutput_log[i,0]:.3f}, {posOutput_log[i,1]:.3f})")
 if counterFDynamic:
     print("FDynamic timer:", sum(counterFDynamic)/len(counterFDynamic))
 print("Elapsed:", counterLoop_End - counterLoop_Start)
 
 # %%
-helper.plot_Continuous(posInput_log, posOutput_log, tVec, extras={'torqueEffort': torque_log, 'thetaDotDot': thetaDotDot_Log}, figsize=(20,14), save_path="plots/output.png")
+helper.plot_Continuous(posInput_log, posOutput_log, tVec, extras={'torqueEffort': torque_log, 'thetaDotDot': thetaDotDot_Log}, figsize=(20,14))

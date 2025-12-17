@@ -335,4 +335,5 @@ def plot_Continuous(posInput_log, posOutput_log, tVec, extras=None,
     plt.tight_layout()
     if save_path:
         fig.savefig(save_path, bbox_inches="tight")
+    plt.show()
     return None
