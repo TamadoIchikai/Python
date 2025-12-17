@@ -143,8 +143,8 @@ tauLim = np.array([20, 15, 5, 20], dtype=np.float64)
 PID_IK_WzXY = controller.PID_Discrete(Kp=80.0, Ki=0.0, Kd=15.0, Ts=SAMPLE_TIME)
 PID_IK_Z = controller.PID_Discrete(Kp=45.0, Ki=0.0, Kd=5.0, Ts=SAMPLE_TIME)
 
-PID_Torque_theta_1 = controller.PID_Discrete(Kp=100.0, Ki=0.0, Kd=30.0, Ts=SAMPLE_TIME, outputLimit=(-tauLim[0], tauLim[0]), initial_integral=tauInit[0])
-PID_Torque_theta_2 = controller.PID_Discrete(Kp=80.0, Ki=0.0, Kd=40.0, Ts=SAMPLE_TIME, outputLimit=(-tauLim[1], tauLim[1]), initial_integral=tauInit[1])
+PID_Torque_theta_1 = controller.PID_Discrete(Kp=489.76, Ki=0.0, Kd=293.38, Ts=SAMPLE_TIME, outputLimit=(-tauLim[0], tauLim[0]), initial_integral=tauInit[0])
+PID_Torque_theta_2 = controller.PID_Discrete(Kp=880.28, Ki=0.0, Kd=43.74, Ts=SAMPLE_TIME, outputLimit=(-tauLim[1], tauLim[1]), initial_integral=tauInit[1])
 PID_Torque_theta_3 = controller.PID_Discrete(Kp=60.0, Ki=0.0, Kd=5.0, Ts=SAMPLE_TIME, outputLimit=(-tauLim[2], tauLim[2]), initial_integral=tauInit[2])
 PID_Torque_theta_4 = controller.PID_Discrete(Kp=40.0, Ki=20.0, Kd=30.0, Ts=SAMPLE_TIME, outputLimit=(-tauLim[3], tauLim[3]), initial_integral=tauInit[3])
 

@@ -483,15 +483,3 @@ if __name__ == "__main__":
     
     # Create comparison plots
     plot_comparison(results_default, results_optimized)
-    
-    # Save results to file
-    np.savez('pid_comparison_results.npz',
-             tVec=results_default['tVec'],
-             ref_x=results_default['posInput_log'][:, 0],
-             ref_y=results_default['posInput_log'][:, 1],
-             default_x=results_default['posOutput_log'][:, 0],
-             default_y=results_default['posOutput_log'][:, 1],
-             optimized_x=results_optimized['posOutput_log'][:, 0],
-             optimized_y=results_optimized['posOutput_log'][:, 1])
-    
-    print("\nResults saved to 'pid_comparison_results.npz'")

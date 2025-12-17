@@ -125,22 +125,11 @@ def run_simulation(use_fpid=True, label="Default", seed=1):
     PID_IK_WzXY = controller.PID_Discrete(Kp=80.0, Ki=0.0, Kd=15.0, Ts=SAMPLE_TIME)
     PID_IK_Z = controller.PID_Discrete(Kp=45.0, Ki=0.0, Kd=5.0, Ts=SAMPLE_TIME)
     
-    PID_Torque_theta_1 = controller.PID_Discrete(
-        Kp=100.0, Ki=0.0, Kd=30.0, Ts=SAMPLE_TIME,
-        outputLimit=(-tauLim[0], tauLim[0]), initial_integral=tauInit[0]
-    )
-    PID_Torque_theta_2 = controller.PID_Discrete(
-        Kp=80.0, Ki=0.0, Kd=40.0, Ts=SAMPLE_TIME,
-        outputLimit=(-tauLim[1], tauLim[1]), initial_integral=tauInit[1]
-    )
-    PID_Torque_theta_3 = controller.PID_Discrete(
-        Kp=60.0, Ki=0.0, Kd=5.0, Ts=SAMPLE_TIME,
-        outputLimit=(-tauLim[2], tauLim[2]), initial_integral=tauInit[2]
-    )
-    PID_Torque_theta_4 = controller.PID_Discrete(
-        Kp=40.0, Ki=20.0, Kd=30.0, Ts=SAMPLE_TIME,
-        outputLimit=(-tauLim[3], tauLim[3]), initial_integral=tauInit[3]
-    )
+    PID_Torque_theta_1 = controller.PID_Discrete(Kp=489.76, Ki=0.0, Kd=293.38, Ts=SAMPLE_TIME, outputLimit=(-tauLim[0], tauLim[0]), initial_integral=tauInit[0])
+    PID_Torque_theta_2 = controller.PID_Discrete(Kp=880.28, Ki=0.0, Kd=43.74, Ts=SAMPLE_TIME, outputLimit=(-tauLim[1], tauLim[1]), initial_integral=tauInit[1])
+    PID_Torque_theta_3 = controller.PID_Discrete(Kp=60.0, Ki=0.0, Kd=5.0, Ts=SAMPLE_TIME, outputLimit=(-tauLim[2], tauLim[2]), initial_integral=tauInit[2])
+    PID_Torque_theta_4 = controller.PID_Discrete(Kp=40.0, Ki=20.0, Kd=30.0, Ts=SAMPLE_TIME, outputLimit=(-tauLim[3], tauLim[3]), initial_integral=tauInit[3])
+
     
     # Load fuzzy controllers if using FPID
     fuzzy_Theta_1 = None
@@ -548,17 +537,3 @@ if __name__ == "__main__":
     # Plot adaptive gains
     if results_fpid['use_fpid']:
         plot_adaptive_gains(results_fpid)
-    
-    # Save results to file
-    np.savez('fpid_pid_comparison_results.npz',
-             tVec=results_pid['tVec'],
-             ref_x=results_pid['posInput_log'][:, 0],
-             ref_y=results_pid['posInput_log'][:, 1],
-             pid_x=results_pid['posOutput_log'][:, 0],
-             pid_y=results_pid['posOutput_log'][:, 1],
-             fpid_x=results_fpid['posOutput_log'][:, 0],
-             fpid_y=results_fpid['posOutput_log'][:, 1],
-             pid_torque=results_pid['torque_log'],
-             fpid_torque=results_fpid['torque_log'])
-    
-    print("\nResults saved to 'fpid_pid_comparison_results.npz'")

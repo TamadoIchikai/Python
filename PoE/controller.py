@@ -178,22 +178,36 @@ def trimf_batch(x, mfs):
 
 @njit
 def eval_grid(e_vec, de_vec, mfs_e, mfs_de, kp_const, kd_const):
-    mu_e = trimf_batch(e_vec, mfs_e)
-    mu_de = trimf_batch(de_vec, mfs_de)
-    M, N = mu_de.shape[1], mu_e.shape[1]
-    w = np.minimum(mu_e[:, None, None, :], mu_de[None, :, :, None])  # (7,7,M,N)
+    mu_e = trimf_batch(e_vec, mfs_e)    # (7, N)
+    mu_de = trimf_batch(de_vec, mfs_de)  # (7, M)
     
-    w_flat  = w.reshape(49, M, N)
-    kp_flat = kp_const.reshape(49)
-    kd_flat = kd_const.reshape(49)
+    N = mu_e.shape[1]  # num e samples
+    M = mu_de.shape[1]  # num de samples
     
-    # Weighted average (wtaver): divide by sum of weights
-    kp_num = np.sum(w_flat * kp_flat[:, None, None], axis=0)
-    kd_num = np.sum(w_flat * kd_flat[:, None, None], axis=0)
-    denom  = np.sum(w_flat, axis=0) + 1e-12  # Avoid division by zero
+    # Initialize output matrices
+    kp = np.zeros((M, N), dtype=np.float64)
+    kd = np.zeros((M, N), dtype=np.float64)
     
-    kp = kp_num / denom
-    kd = kd_num / denom
+    # For each output grid point
+    for m in range(M):
+        for n in range(N):
+            # Compute rule weights: w[i,j] = min(mu_e[i,n], mu_de[j,m])
+            kp_num = 0.0
+            kd_num = 0.0
+            denom = 0.0
+            
+            for i in range(7):
+                for j in range(7):
+                    w_ij = min(mu_e[i, n], mu_de[j, m])
+                    kp_num += w_ij * kp_const[i, j]
+                    kd_num += w_ij * kd_const[i, j]
+                    denom += w_ij
+            
+            # Weighted average (wtaver)
+            denom = max(denom, 1e-12)  # Avoid division by zero
+            kp[m, n] = kp_num / denom
+            kd[m, n] = kd_num / denom
+    
     return kp, kd
 
 def build_const_matrix(table, map_val):
