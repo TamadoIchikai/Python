@@ -10,19 +10,27 @@ import time
 import matplotlib.pyplot as plt
 
 
-def run_simulation(Kp1, Kd1, Kp2, Kd2, label="Default", seed=1):
+def run_simulation(use_fpid=True, label="Default", seed=1):
     """
-    Run simulation with specified PID parameters.
+    Run simulation with optional Fuzzy PID.
     
-    Returns:
-    --------
+    Parameters
+    ----------
+    use_fpid : bool
+        If True, use fuzzy adaptive PID. If False, use standard PID.
+    label : str
+        Label for this simulation
+    seed : int
+        Random seed for trajectory
+    
+    Returns
+    -------
     results : dict
         Dictionary containing time vector and logged data
     """
     print(f"\n{'='*60}")
     print(f"Running simulation: {label}")
-    print(f"PID_theta_1: Kp={Kp1:.2f}, Kd={Kd1:.2f}")
-    print(f"PID_theta_2: Kp={Kp2:.2f}, Kd={Kd2:.2f}")
+    print(f"Fuzzy PID: {use_fpid}")
     print(f"{'='*60}")
     
     # Robotic configs
@@ -41,7 +49,7 @@ def run_simulation(Kp1, Kd1, Kp2, Kd2, label="Default", seed=1):
     c2 = .08
     
     theta_Pose = np.array([np.deg2rad(0), np.deg2rad(0), np.deg2rad(0), 0], dtype=np.float64)
-    theta_D = np.array([np.deg2rad(0), np.deg2rad(0), np.deg2rad(0), 0], dtype=np.float64)
+    theta_D = np.array([np.deg2rad(0), np.deg2rad(0), np.deg2rad(0), 0.4], dtype=np.float64)
     
     n = (3, -3)
     
@@ -97,16 +105,7 @@ def run_simulation(Kp1, Kd1, Kp2, Kd2, label="Default", seed=1):
     
     # Simulation parameters
     SAMPLE_TIME = 0.001
-    STOP_TIME = 60.0
-    
-    N = 100
-    all_points = np.array([[x, y] for x in range(3) for y in range(3)], dtype=np.int64)
-    randomList = []
-    np.random.seed(42)  # Fixed seed for reproducibility
-    while len(randomList) < N:
-        shuffled = all_points[np.random.permutation(9)]
-        randomList.append(shuffled)
-    randomList = np.vstack(randomList)[:N].astype(np.int64)
+    STOP_TIME = 30.0
     
     # Initialize states
     Tsb = kine.PoE_transform(S, M, theta_Pose)
@@ -126,13 +125,12 @@ def run_simulation(Kp1, Kd1, Kp2, Kd2, label="Default", seed=1):
     PID_IK_WzXY = controller.PID_Discrete(Kp=80.0, Ki=0.0, Kd=15.0, Ts=SAMPLE_TIME)
     PID_IK_Z = controller.PID_Discrete(Kp=45.0, Ki=0.0, Kd=5.0, Ts=SAMPLE_TIME)
     
-    # Use provided PID parameters
     PID_Torque_theta_1 = controller.PID_Discrete(
-        Kp=Kp1, Ki=0.0, Kd=Kd1, Ts=SAMPLE_TIME,
+        Kp=100.0, Ki=0.0, Kd=30.0, Ts=SAMPLE_TIME,
         outputLimit=(-tauLim[0], tauLim[0]), initial_integral=tauInit[0]
     )
     PID_Torque_theta_2 = controller.PID_Discrete(
-        Kp=Kp2, Ki=0.0, Kd=Kd2, Ts=SAMPLE_TIME,
+        Kp=80.0, Ki=0.0, Kd=40.0, Ts=SAMPLE_TIME,
         outputLimit=(-tauLim[1], tauLim[1]), initial_integral=tauInit[1]
     )
     PID_Torque_theta_3 = controller.PID_Discrete(
@@ -144,6 +142,24 @@ def run_simulation(Kp1, Kd1, Kp2, Kd2, label="Default", seed=1):
         outputLimit=(-tauLim[3], tauLim[3]), initial_integral=tauInit[3]
     )
     
+    # Load fuzzy controllers if using FPID
+    fuzzy_Theta_1 = None
+    fuzzy_Theta_2 = None
+    KpBase_theta_1 = PID_Torque_theta_1.Kp
+    KdBase_theta_1 = PID_Torque_theta_1.Kd
+    KpBase_theta_2 = PID_Torque_theta_2.Kp
+    KdBase_theta_2 = PID_Torque_theta_2.Kd
+    
+    if use_fpid:
+        try:
+            fuzzy_Theta_1 = controller.FuzzyLookupController("FuzzyLogicOut/FuzzySugeno_e_Theta_1.npz")
+            fuzzy_Theta_2 = controller.FuzzyLookupController("FuzzyLogicOut/FuzzySugeno_e_Theta_2.npz")
+            print("Fuzzy controllers loaded successfully")
+        except FileNotFoundError as e:
+            print(f"Warning: Could not load fuzzy controllers: {e}")
+            print("Falling back to standard PID")
+            use_fpid = False
+    
     Vs_PID = np.zeros(6, dtype=np.float64)
     torqueEffort = np.zeros_like(thetaRun_IK)
     
@@ -151,6 +167,8 @@ def run_simulation(Kp1, Kd1, Kp2, Kd2, label="Default", seed=1):
     posInput_log = np.zeros((n_steps, 3), dtype=np.float64)
     posOutput_log = np.zeros((n_steps, 3), dtype=np.float64)
     torque_log = np.zeros((n_steps, thetaRun_IK.size), dtype=np.float64)
+    kp_adaptive_log = np.zeros((n_steps, 2), dtype=np.float64)
+    kd_adaptive_log = np.zeros((n_steps, 2), dtype=np.float64)
     tVec = np.zeros(n_steps, dtype=np.float64)
     
     traj = trajGen.TrajectoryGen(
@@ -169,7 +187,7 @@ def run_simulation(Kp1, Kd1, Kp2, Kd2, label="Default", seed=1):
     for i in range(n_steps):
         t = i * SAMPLE_TIME
         
-        R_traj, pos_traj =traj.generate(t)
+        R_traj, pos_traj = traj.generate(t)
         T_traj = helper.RpTo_TransMat(R_traj, pos_traj)
         
         Vs = kine.twist_Error(Tsb, T_traj)
@@ -205,6 +223,22 @@ def run_simulation(Kp1, Kd1, Kp2, Kd2, label="Default", seed=1):
         thetaRun_IK = helper.discrete_Integrator(thetaRun_IK, thetaDotRun_IK, SAMPLE_TIME)
         
         error_theta = thetaRun_IK - thetaRun_Actual
+        errorDot_theta = thetaDotRun_IK - thetaDotRun_Actual
+        
+        # Apply fuzzy adaptation if enabled
+        if use_fpid and fuzzy_Theta_1 is not None and fuzzy_Theta_2 is not None:
+            dKp_theta_1, dKd_theta_1 = fuzzy_Theta_1.get_gains(error_theta[0], errorDot_theta[0])
+            dKp_theta_2, dKd_theta_2 = fuzzy_Theta_2.get_gains(error_theta[1], errorDot_theta[1])
+            
+            PID_Torque_theta_1.Kp = KpBase_theta_1 * dKp_theta_1
+            PID_Torque_theta_1.Kd = KdBase_theta_1 * dKd_theta_1
+            PID_Torque_theta_2.Kp = KpBase_theta_2 * dKp_theta_2
+            PID_Torque_theta_2.Kd = KdBase_theta_2 * dKd_theta_2
+            
+            kp_adaptive_log[i, 0] = PID_Torque_theta_1.Kp
+            kp_adaptive_log[i, 1] = PID_Torque_theta_2.Kp
+            kd_adaptive_log[i, 0] = PID_Torque_theta_1.Kd
+            kd_adaptive_log[i, 1] = PID_Torque_theta_2.Kd
         
         torqueEffort[0] = PID_Torque_theta_1.update(error_theta[0])
         torqueEffort[1] = PID_Torque_theta_2.update(error_theta[1])
@@ -220,7 +254,7 @@ def run_simulation(Kp1, Kd1, Kp2, Kd2, label="Default", seed=1):
         
         Tsb = kine.PoE_transform(S, M, thetaRun_Actual)
         
-        if (i % 10000) == 0:
+        if (i % 5000) == 0:
             print(f"  Progress: {i}/{n_steps} ({i/n_steps*100:.1f}%)")
         
         posInput_log[i, :] = pos_traj
@@ -236,7 +270,10 @@ def run_simulation(Kp1, Kd1, Kp2, Kd2, label="Default", seed=1):
         'posInput_log': posInput_log,
         'posOutput_log': posOutput_log,
         'torque_log': torque_log,
-        'label': label
+        'kp_adaptive_log': kp_adaptive_log,
+        'kd_adaptive_log': kd_adaptive_log,
+        'label': label,
+        'use_fpid': use_fpid
     }
 
 
@@ -249,28 +286,26 @@ def compute_metrics(ref, output):
     return mae, rmse, max_error
 
 
-def plot_comparison(results_default, results_optimized):
-    """
-    Create comprehensive comparison plots.
-    """
+def plot_comparison(results_pid, results_fpid):
+    """Create comprehensive comparison plots."""
     fig = plt.figure(figsize=(20, 14))
     gs = fig.add_gridspec(4, 3, hspace=0.3, wspace=0.3)
     
-    t = results_default['tVec']
-    ref_x = results_default['posInput_log'][:, 0]
-    ref_y = results_default['posInput_log'][:, 1]
+    t = results_pid['tVec']
+    ref_x = results_pid['posInput_log'][:, 0]
+    ref_y = results_pid['posInput_log'][:, 1]
     
-    default_x = results_default['posOutput_log'][:, 0]
-    default_y = results_default['posOutput_log'][:, 1]
+    pid_x = results_pid['posOutput_log'][:, 0]
+    pid_y = results_pid['posOutput_log'][:, 1]
     
-    optimized_x = results_optimized['posOutput_log'][:, 0]
-    optimized_y = results_optimized['posOutput_log'][:, 1]
+    fpid_x = results_fpid['posOutput_log'][:, 0]
+    fpid_y = results_fpid['posOutput_log'][:, 1]
     
     # 1. X Position Tracking
     ax1 = fig.add_subplot(gs[0, 0])
     ax1.plot(t, ref_x, 'k--', linewidth=2, label='Reference', alpha=0.7)
-    ax1.plot(t, default_x, 'b-', linewidth=1.5, label='Default PID', alpha=0.8)
-    ax1.plot(t, optimized_x, 'r-', linewidth=1.5, label='Optimized PID', alpha=0.8)
+    ax1.plot(t, pid_x, 'b-', linewidth=1.5, label='Standard PID', alpha=0.8)
+    ax1.plot(t, fpid_x, 'r-', linewidth=1.5, label='Fuzzy PID', alpha=0.8)
     ax1.set_xlabel('Time (s)', fontsize=11)
     ax1.set_ylabel('X Position (m)', fontsize=11)
     ax1.set_title('X Position Tracking', fontsize=12, fontweight='bold')
@@ -280,8 +315,8 @@ def plot_comparison(results_default, results_optimized):
     # 2. Y Position Tracking
     ax2 = fig.add_subplot(gs[0, 1])
     ax2.plot(t, ref_y, 'k--', linewidth=2, label='Reference', alpha=0.7)
-    ax2.plot(t, default_y, 'b-', linewidth=1.5, label='Default PID', alpha=0.8)
-    ax2.plot(t, optimized_y, 'r-', linewidth=1.5, label='Optimized PID', alpha=0.8)
+    ax2.plot(t, pid_y, 'b-', linewidth=1.5, label='Standard PID', alpha=0.8)
+    ax2.plot(t, fpid_y, 'r-', linewidth=1.5, label='Fuzzy PID', alpha=0.8)
     ax2.set_xlabel('Time (s)', fontsize=11)
     ax2.set_ylabel('Y Position (m)', fontsize=11)
     ax2.set_title('Y Position Tracking', fontsize=12, fontweight='bold')
@@ -291,8 +326,8 @@ def plot_comparison(results_default, results_optimized):
     # 3. XY Trajectory Plot
     ax3 = fig.add_subplot(gs[0, 2])
     ax3.plot(ref_x, ref_y, 'k--', linewidth=2, label='Reference', alpha=0.7)
-    ax3.plot(default_x, default_y, 'b-', linewidth=1.5, label='Default PID', alpha=0.6)
-    ax3.plot(optimized_x, optimized_y, 'r-', linewidth=1.5, label='Optimized PID', alpha=0.6)
+    ax3.plot(pid_x, pid_y, 'b-', linewidth=1.5, label='Standard PID', alpha=0.6)
+    ax3.plot(fpid_x, fpid_y, 'r-', linewidth=1.5, label='Fuzzy PID', alpha=0.6)
     ax3.set_xlabel('X Position (m)', fontsize=11)
     ax3.set_ylabel('Y Position (m)', fontsize=11)
     ax3.set_title('XY Trajectory', fontsize=12, fontweight='bold')
@@ -300,158 +335,186 @@ def plot_comparison(results_default, results_optimized):
     ax3.grid(True, alpha=0.3)
     ax3.axis('equal')
     
-    # 4. X Error (Reference vs Default)
-    error_default_x = ref_x - default_x
+    # 4. X Error (PID)
+    error_pid_x = ref_x - pid_x
     ax4 = fig.add_subplot(gs[1, 0])
-    ax4.plot(t, error_default_x * 1000, 'b-', linewidth=1.5, label='Default PID')
+    ax4.plot(t, error_pid_x * 1000, 'b-', linewidth=1.5)
     ax4.axhline(y=0, color='k', linestyle='--', alpha=0.5)
     ax4.set_xlabel('Time (s)', fontsize=11)
     ax4.set_ylabel('X Error (mm)', fontsize=11)
-    ax4.set_title('X Tracking Error - Default PID', fontsize=12, fontweight='bold')
+    ax4.set_title('X Tracking Error - Standard PID', fontsize=12, fontweight='bold')
     ax4.grid(True, alpha=0.3)
-    mae, rmse, max_err = compute_metrics(ref_x, default_x)
+    mae, rmse, max_err = compute_metrics(ref_x, pid_x)
     ax4.text(0.02, 0.98, f'MAE: {mae*1000:.3f}mm\nRMSE: {rmse*1000:.3f}mm\nMax: {max_err*1000:.3f}mm',
              transform=ax4.transAxes, fontsize=9, verticalalignment='top',
-             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+             bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
     
-    # 5. Y Error (Reference vs Default)
-    error_default_y = ref_y - default_y
+    # 5. Y Error (PID)
+    error_pid_y = ref_y - pid_y
     ax5 = fig.add_subplot(gs[1, 1])
-    ax5.plot(t, error_default_y * 1000, 'b-', linewidth=1.5, label='Default PID')
+    ax5.plot(t, error_pid_y * 1000, 'b-', linewidth=1.5)
     ax5.axhline(y=0, color='k', linestyle='--', alpha=0.5)
     ax5.set_xlabel('Time (s)', fontsize=11)
     ax5.set_ylabel('Y Error (mm)', fontsize=11)
-    ax5.set_title('Y Tracking Error - Default PID', fontsize=12, fontweight='bold')
+    ax5.set_title('Y Tracking Error - Standard PID', fontsize=12, fontweight='bold')
     ax5.grid(True, alpha=0.3)
-    mae, rmse, max_err = compute_metrics(ref_y, default_y)
+    mae, rmse, max_err = compute_metrics(ref_y, pid_y)
     ax5.text(0.02, 0.98, f'MAE: {mae*1000:.3f}mm\nRMSE: {rmse*1000:.3f}mm\nMax: {max_err*1000:.3f}mm',
              transform=ax5.transAxes, fontsize=9, verticalalignment='top',
-             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+             bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
     
-    # 6. Combined Error (Default)
-    error_default_mag = np.sqrt(error_default_x**2 + error_default_y**2)
+    # 6. Combined Error (PID)
+    error_pid_mag = np.sqrt(error_pid_x**2 + error_pid_y**2)
     ax6 = fig.add_subplot(gs[1, 2])
-    ax6.plot(t, error_default_mag * 1000, 'b-', linewidth=1.5)
+    ax6.plot(t, error_pid_mag * 1000, 'b-', linewidth=1.5)
     ax6.set_xlabel('Time (s)', fontsize=11)
     ax6.set_ylabel('Position Error (mm)', fontsize=11)
-    ax6.set_title('Combined Position Error - Default PID', fontsize=12, fontweight='bold')
+    ax6.set_title('Combined Position Error - Standard PID', fontsize=12, fontweight='bold')
     ax6.grid(True, alpha=0.3)
     
-    # 7. X Error (Reference vs Optimized)
-    error_optimized_x = ref_x - optimized_x
+    # 7. X Error (FPID)
+    error_fpid_x = ref_x - fpid_x
     ax7 = fig.add_subplot(gs[2, 0])
-    ax7.plot(t, error_optimized_x * 1000, 'r-', linewidth=1.5, label='Optimized PID')
+    ax7.plot(t, error_fpid_x * 1000, 'r-', linewidth=1.5)
     ax7.axhline(y=0, color='k', linestyle='--', alpha=0.5)
     ax7.set_xlabel('Time (s)', fontsize=11)
     ax7.set_ylabel('X Error (mm)', fontsize=11)
-    ax7.set_title('X Tracking Error - Optimized PID', fontsize=12, fontweight='bold')
+    ax7.set_title('X Tracking Error - Fuzzy PID', fontsize=12, fontweight='bold')
     ax7.grid(True, alpha=0.3)
-    mae, rmse, max_err = compute_metrics(ref_x, optimized_x)
+    mae, rmse, max_err = compute_metrics(ref_x, fpid_x)
     ax7.text(0.02, 0.98, f'MAE: {mae*1000:.3f}mm\nRMSE: {rmse*1000:.3f}mm\nMax: {max_err*1000:.3f}mm',
              transform=ax7.transAxes, fontsize=9, verticalalignment='top',
-             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+             bbox=dict(boxstyle='round', facecolor='lightcoral', alpha=0.5))
     
-    # 8. Y Error (Reference vs Optimized)
-    error_optimized_y = ref_y - optimized_y
+    # 8. Y Error (FPID)
+    error_fpid_y = ref_y - fpid_y
     ax8 = fig.add_subplot(gs[2, 1])
-    ax8.plot(t, error_optimized_y * 1000, 'r-', linewidth=1.5, label='Optimized PID')
+    ax8.plot(t, error_fpid_y * 1000, 'r-', linewidth=1.5)
     ax8.axhline(y=0, color='k', linestyle='--', alpha=0.5)
     ax8.set_xlabel('Time (s)', fontsize=11)
     ax8.set_ylabel('Y Error (mm)', fontsize=11)
-    ax8.set_title('Y Tracking Error - Optimized PID', fontsize=12, fontweight='bold')
+    ax8.set_title('Y Tracking Error - Fuzzy PID', fontsize=12, fontweight='bold')
     ax8.grid(True, alpha=0.3)
-    mae, rmse, max_err = compute_metrics(ref_y, optimized_y)
+    mae, rmse, max_err = compute_metrics(ref_y, fpid_y)
     ax8.text(0.02, 0.98, f'MAE: {mae*1000:.3f}mm\nRMSE: {rmse*1000:.3f}mm\nMax: {max_err*1000:.3f}mm',
              transform=ax8.transAxes, fontsize=9, verticalalignment='top',
-             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+             bbox=dict(boxstyle='round', facecolor='lightcoral', alpha=0.5))
     
-    # 9. Combined Error (Optimized)
-    error_optimized_mag = np.sqrt(error_optimized_x**2 + error_optimized_y**2)
+    # 9. Combined Error (FPID)
+    error_fpid_mag = np.sqrt(error_fpid_x**2 + error_fpid_y**2)
     ax9 = fig.add_subplot(gs[2, 2])
-    ax9.plot(t, error_optimized_mag * 1000, 'r-', linewidth=1.5)
+    ax9.plot(t, error_fpid_mag * 1000, 'r-', linewidth=1.5)
     ax9.set_xlabel('Time (s)', fontsize=11)
     ax9.set_ylabel('Position Error (mm)', fontsize=11)
-    ax9.set_title('Combined Position Error - Optimized PID', fontsize=12, fontweight='bold')
+    ax9.set_title('Combined Position Error - Fuzzy PID', fontsize=12, fontweight='bold')
     ax9.grid(True, alpha=0.3)
     
-    # 10. Difference in X output (Default vs Optimized)
-    diff_x = default_x - optimized_x
+    # 10. Error Comparison (PID vs FPID)
     ax10 = fig.add_subplot(gs[3, 0])
-    ax10.plot(t, diff_x * 1000, 'g-', linewidth=1.5)
-    ax10.axhline(y=0, color='k', linestyle='--', alpha=0.5)
+    ax10.plot(t, error_pid_mag * 1000, 'b-', linewidth=1.5, label='Standard PID', alpha=0.7)
+    ax10.plot(t, error_fpid_mag * 1000, 'r-', linewidth=1.5, label='Fuzzy PID', alpha=0.7)
     ax10.set_xlabel('Time (s)', fontsize=11)
-    ax10.set_ylabel('X Difference (mm)', fontsize=11)
-    ax10.set_title('Output Difference: Default - Optimized (X)', fontsize=12, fontweight='bold')
+    ax10.set_ylabel('Position Error (mm)', fontsize=11)
+    ax10.set_title('Error Comparison', fontsize=12, fontweight='bold')
+    ax10.legend(fontsize=9)
     ax10.grid(True, alpha=0.3)
-    mae_diff = np.mean(np.abs(diff_x))
-    ax10.text(0.02, 0.98, f'MAE: {mae_diff*1000:.3f}mm',
-             transform=ax10.transAxes, fontsize=9, verticalalignment='top',
-             bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.5))
     
-    # 11. Difference in Y output (Default vs Optimized)
-    diff_y = default_y - optimized_y
+    # 11. Torque Comparison - Joint 1
     ax11 = fig.add_subplot(gs[3, 1])
-    ax11.plot(t, diff_y * 1000, 'g-', linewidth=1.5)
-    ax11.axhline(y=0, color='k', linestyle='--', alpha=0.5)
+    ax11.plot(t, results_pid['torque_log'][:, 0], 'b-', linewidth=1, label='Standard PID', alpha=0.7)
+    ax11.plot(t, results_fpid['torque_log'][:, 0], 'r-', linewidth=1, label='Fuzzy PID', alpha=0.7)
     ax11.set_xlabel('Time (s)', fontsize=11)
-    ax11.set_ylabel('Y Difference (mm)', fontsize=11)
-    ax11.set_title('Output Difference: Default - Optimized (Y)', fontsize=12, fontweight='bold')
+    ax11.set_ylabel('Torque (Nm)', fontsize=11)
+    ax11.set_title('Joint 1 Torque', fontsize=12, fontweight='bold')
+    ax11.legend(fontsize=9)
     ax11.grid(True, alpha=0.3)
-    mae_diff = np.mean(np.abs(diff_y))
-    ax11.text(0.02, 0.98, f'MAE: {mae_diff*1000:.3f}mm',
-             transform=ax11.transAxes, fontsize=9, verticalalignment='top',
-             bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.5))
     
-    # 12. Error Comparison (Default vs Optimized)
+    # 12. Torque Comparison - Joint 2
     ax12 = fig.add_subplot(gs[3, 2])
-    ax12.plot(t, error_default_mag * 1000, 'b-', linewidth=1.5, label='Default PID', alpha=0.7)
-    ax12.plot(t, error_optimized_mag * 1000, 'r-', linewidth=1.5, label='Optimized PID', alpha=0.7)
+    ax12.plot(t, results_pid['torque_log'][:, 1], 'b-', linewidth=1, label='Standard PID', alpha=0.7)
+    ax12.plot(t, results_fpid['torque_log'][:, 1], 'r-', linewidth=1, label='Fuzzy PID', alpha=0.7)
     ax12.set_xlabel('Time (s)', fontsize=11)
-    ax12.set_ylabel('Position Error (mm)', fontsize=11)
-    ax12.set_title('Error Comparison', fontsize=12, fontweight='bold')
+    ax12.set_ylabel('Torque (Nm)', fontsize=11)
+    ax12.set_title('Joint 2 Torque', fontsize=12, fontweight='bold')
     ax12.legend(fontsize=9)
     ax12.grid(True, alpha=0.3)
     
-    print("\nComparison plot saved to 'pid_comparison_complete.png'")
     plt.show()
 
 
-def print_summary_statistics(results_default, results_optimized):
+def plot_adaptive_gains(results_fpid):
+    """Plot adaptive gains over time."""
+    fig, axes = plt.subplots(2, 2, figsize=(16, 8))
+    t = results_fpid['tVec']
+    
+    # Kp Joint 1
+    axes[0, 0].plot(t, results_fpid['kp_adaptive_log'][:, 0], 'r-', linewidth=1.5)
+    axes[0, 0].set_xlabel('Time (s)', fontsize=11)
+    axes[0, 0].set_ylabel('Kp (adaptive)', fontsize=11)
+    axes[0, 0].set_title('Adaptive Kp - Joint 1', fontsize=12, fontweight='bold')
+    axes[0, 0].grid(True, alpha=0.3)
+    
+    # Kd Joint 1
+    axes[0, 1].plot(t, results_fpid['kd_adaptive_log'][:, 0], 'b-', linewidth=1.5)
+    axes[0, 1].set_xlabel('Time (s)', fontsize=11)
+    axes[0, 1].set_ylabel('Kd (adaptive)', fontsize=11)
+    axes[0, 1].set_title('Adaptive Kd - Joint 1', fontsize=12, fontweight='bold')
+    axes[0, 1].grid(True, alpha=0.3)
+    
+    # Kp Joint 2
+    axes[1, 0].plot(t, results_fpid['kp_adaptive_log'][:, 1], 'r-', linewidth=1.5)
+    axes[1, 0].set_xlabel('Time (s)', fontsize=11)
+    axes[1, 0].set_ylabel('Kp (adaptive)', fontsize=11)
+    axes[1, 0].set_title('Adaptive Kp - Joint 2', fontsize=12, fontweight='bold')
+    axes[1, 0].grid(True, alpha=0.3)
+    
+    # Kd Joint 2
+    axes[1, 1].plot(t, results_fpid['kd_adaptive_log'][:, 1], 'b-', linewidth=1.5)
+    axes[1, 1].set_xlabel('Time (s)', fontsize=11)
+    axes[1, 1].set_ylabel('Kd (adaptive)', fontsize=11)
+    axes[1, 1].set_title('Adaptive Kd - Joint 2', fontsize=12, fontweight='bold')
+    axes[1, 1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
+
+
+def print_summary_statistics(results_pid, results_fpid):
     """Print summary statistics comparing both methods."""
-    ref_x = results_default['posInput_log'][:, 0]
-    ref_y = results_default['posInput_log'][:, 1]
+    ref_x = results_pid['posInput_log'][:, 0]
+    ref_y = results_pid['posInput_log'][:, 1]
     
-    default_x = results_default['posOutput_log'][:, 0]
-    default_y = results_default['posOutput_log'][:, 1]
+    pid_x = results_pid['posOutput_log'][:, 0]
+    pid_y = results_pid['posOutput_log'][:, 1]
     
-    optimized_x = results_optimized['posOutput_log'][:, 0]
-    optimized_y = results_optimized['posOutput_log'][:, 1]
+    fpid_x = results_fpid['posOutput_log'][:, 0]
+    fpid_y = results_fpid['posOutput_log'][:, 1]
     
     print("\n" + "="*80)
-    print("SUMMARY STATISTICS")
+    print("SUMMARY STATISTICS: Standard PID vs Fuzzy PID")
     print("="*80)
     
-    # Default PID statistics
-    mae_x_def, rmse_x_def, max_x_def = compute_metrics(ref_x, default_x)
-    mae_y_def, rmse_y_def, max_y_def = compute_metrics(ref_y, default_y)
+    # Standard PID statistics
+    mae_x_pid, rmse_x_pid, max_x_pid = compute_metrics(ref_x, pid_x)
+    mae_y_pid, rmse_y_pid, max_y_pid = compute_metrics(ref_y, pid_y)
     
-    # Optimized PID statistics
-    mae_x_opt, rmse_x_opt, max_x_opt = compute_metrics(ref_x, optimized_x)
-    mae_y_opt, rmse_y_opt, max_y_opt = compute_metrics(ref_y, optimized_y)
+    # Fuzzy PID statistics
+    mae_x_fpid, rmse_x_fpid, max_x_fpid = compute_metrics(ref_x, fpid_x)
+    mae_y_fpid, rmse_y_fpid, max_y_fpid = compute_metrics(ref_y, fpid_y)
     
-    print("\n--- DEFAULT PID ---")
-    print(f"X-axis: MAE={mae_x_def*1000:.4f}mm, RMSE={rmse_x_def*1000:.4f}mm, Max={max_x_def*1000:.4f}mm")
-    print(f"Y-axis: MAE={mae_y_def*1000:.4f}mm, RMSE={rmse_y_def*1000:.4f}mm, Max={max_y_def*1000:.4f}mm")
+    print("\n--- STANDARD PID ---")
+    print(f"X-axis: MAE={mae_x_pid*1000:.4f}mm, RMSE={rmse_x_pid*1000:.4f}mm, Max={max_x_pid*1000:.4f}mm")
+    print(f"Y-axis: MAE={mae_y_pid*1000:.4f}mm, RMSE={rmse_y_pid*1000:.4f}mm, Max={max_y_pid*1000:.4f}mm")
     
-    print("\n--- OPTIMIZED PID ---")
-    print(f"X-axis: MAE={mae_x_opt*1000:.4f}mm, RMSE={rmse_x_opt*1000:.4f}mm, Max={max_x_opt*1000:.4f}mm")
-    print(f"Y-axis: MAE={mae_y_opt*1000:.4f}mm, RMSE={rmse_y_opt*1000:.4f}mm, Max={max_y_opt*1000:.4f}mm")
+    print("\n--- FUZZY PID ---")
+    print(f"X-axis: MAE={mae_x_fpid*1000:.4f}mm, RMSE={rmse_x_fpid*1000:.4f}mm, Max={max_x_fpid*1000:.4f}mm")
+    print(f"Y-axis: MAE={mae_y_fpid*1000:.4f}mm, RMSE={rmse_y_fpid*1000:.4f}mm, Max={max_y_fpid*1000:.4f}mm")
     
-    print("\n--- IMPROVEMENT ---")
-    improvement_x_mae = (mae_x_def - mae_x_opt) / mae_x_def * 100
-    improvement_y_mae = (mae_y_def - mae_y_opt) / mae_y_def * 100
-    improvement_x_rmse = (rmse_x_def - rmse_x_opt) / rmse_x_def * 100
-    improvement_y_rmse = (rmse_y_def - rmse_y_opt) / rmse_y_def * 100
+    print("\n--- IMPROVEMENT (Fuzzy PID vs Standard PID) ---")
+    improvement_x_mae = (mae_x_pid - mae_x_fpid) / mae_x_pid * 100 if mae_x_pid > 0 else 0
+    improvement_y_mae = (mae_y_pid - mae_y_fpid) / mae_y_pid * 100 if mae_y_pid > 0 else 0
+    improvement_x_rmse = (rmse_x_pid - rmse_x_fpid) / rmse_x_pid * 100 if rmse_x_pid > 0 else 0
+    improvement_y_rmse = (rmse_y_pid - rmse_y_fpid) / rmse_y_pid * 100 if rmse_y_pid > 0 else 0
     
     print(f"X-axis MAE improvement: {improvement_x_mae:+.2f}%")
     print(f"Y-axis MAE improvement: {improvement_y_mae:+.2f}%")
@@ -462,36 +525,40 @@ def print_summary_statistics(results_default, results_optimized):
 
 
 if __name__ == "__main__":
-    # Run with default PID parameters
-    results_default = run_simulation(
-        Kp1=100.0, Kd1=30.0,
-        Kp2=80.0, Kd2=40.0,
-        label="Default PID",
+    # Run with standard PID
+    results_pid = run_simulation(
+        use_fpid=False,
+        label="Standard PID",
         seed=3
     )
     
-    # Run with optimized PID parameters
-    results_optimized = run_simulation(
-        Kp1=489.76, Kd1=293.38,
-        Kp2=880.28, Kd2=43.74,
-        label="Optimized PID",
+    # Run with Fuzzy PID
+    results_fpid = run_simulation(
+        use_fpid=True,
+        label="Fuzzy PID",
         seed=3
     )
     
     # Print summary statistics
-    print_summary_statistics(results_default, results_optimized)
+    print_summary_statistics(results_pid, results_fpid)
     
     # Create comparison plots
-    plot_comparison(results_default, results_optimized)
+    plot_comparison(results_pid, results_fpid)
+    
+    # Plot adaptive gains
+    if results_fpid['use_fpid']:
+        plot_adaptive_gains(results_fpid)
     
     # Save results to file
-    np.savez('pid_comparison_results.npz',
-             tVec=results_default['tVec'],
-             ref_x=results_default['posInput_log'][:, 0],
-             ref_y=results_default['posInput_log'][:, 1],
-             default_x=results_default['posOutput_log'][:, 0],
-             default_y=results_default['posOutput_log'][:, 1],
-             optimized_x=results_optimized['posOutput_log'][:, 0],
-             optimized_y=results_optimized['posOutput_log'][:, 1])
+    np.savez('fpid_pid_comparison_results.npz',
+             tVec=results_pid['tVec'],
+             ref_x=results_pid['posInput_log'][:, 0],
+             ref_y=results_pid['posInput_log'][:, 1],
+             pid_x=results_pid['posOutput_log'][:, 0],
+             pid_y=results_pid['posOutput_log'][:, 1],
+             fpid_x=results_fpid['posOutput_log'][:, 0],
+             fpid_y=results_fpid['posOutput_log'][:, 1],
+             pid_torque=results_pid['torque_log'],
+             fpid_torque=results_fpid['torque_log'])
     
-    print("\nResults saved to 'pid_comparison_results.npz'")
+    print("\nResults saved to 'fpid_pid_comparison_results.npz'")
