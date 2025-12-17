@@ -148,6 +148,12 @@ PID_Torque_theta_2 = controller.PID_Discrete(Kp=80.0, Ki=0.0, Kd=40.0, Ts=SAMPLE
 PID_Torque_theta_3 = controller.PID_Discrete(Kp=60.0, Ki=0.0, Kd=5.0, Ts=SAMPLE_TIME, outputLimit=(-tauLim[2], tauLim[2]), initial_integral=tauInit[2])
 PID_Torque_theta_4 = controller.PID_Discrete(Kp=40.0, Ki=20.0, Kd=30.0, Ts=SAMPLE_TIME, outputLimit=(-tauLim[3], tauLim[3]), initial_integral=tauInit[3])
 
+fuzzy_Theta_1 = controller.FuzzyLookupController("FuzzyLogicOut/FuzzySugeno_e_Theta_1.npz")
+KpBase_theta_1, KdBase_theta_1  = PID_Torque_theta_1.Kp, PID_Torque_theta_1.Kd
+
+fuzzy_Theta_2 = controller.FuzzyLookupController("FuzzyLogicOut/FuzzySugeno_e_Theta_2.npz")
+KpBase_theta_2, KdBase_theta_2  = PID_Torque_theta_2.Kp, PID_Torque_theta_2.Kd
+
 Vs_PID = np.zeros(6, dtype=np.float64)
 torqueEffort = np.zeros_like(thetaRun_IK)
 
@@ -213,6 +219,13 @@ for i in range(n_steps):
     thetaRun_IK = helper.discrete_Integrator(thetaRun_IK, thetaDotRun_IK, SAMPLE_TIME)
 
     error_theta = thetaRun_IK - thetaRun_Actual
+    errorDot_theta = thetaRun_IK - thetaDotRun_Actual
+
+    dKp_theta_1, dKd_theta_1 = fuzzy_Theta_1.get_gains(error_theta[0], errorDot_theta[0])
+    dKp_theta_2, dKd_theta_2 = fuzzy_Theta_2.get_gains(error_theta[1], errorDot_theta[1])
+
+    PID_Torque_theta_1.Kp, PID_Torque_theta_1.Kd = KpBase_theta_1 * dKp_theta_1, KdBase_theta_1  * dKd_theta_1
+    PID_Torque_theta_2.Kp, PID_Torque_theta_2.Kd = KpBase_theta_2 * dKp_theta_2, KdBase_theta_2  * dKd_theta_2
 
     torqueEffort[0] = PID_Torque_theta_1.update(error_theta[0])
     torqueEffort[1] = PID_Torque_theta_2.update(error_theta[1])

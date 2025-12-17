@@ -1,8 +1,8 @@
 import PoE.controller as controller
 import PoE.helper as helper
 
-theta_N = 1
-npz_path = f"FuzzyLogicOut/FuzzySugeno_e_Theta{theta_N}.npz"
+theta_N = 2
+npz_path = f"FuzzyLogicOut/FuzzySugeno_e_Theta_{theta_N}.npz"
 
 e_range  = (-0.1, 0.1)
 de_range = (-1.0, 1.0)

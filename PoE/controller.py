@@ -1,8 +1,9 @@
-import numpy as np
-from numba import njit
-import PoE.helper as helper
-from scipy.interpolate import RegularGridInterpolator
 import os
+import numpy as np
+import PoE.helper as helper
+
+from numba import njit
+from scipy.interpolate import RegularGridInterpolator
 
 class PID_Discrete:
     def __init__(
@@ -99,10 +100,10 @@ class FuzzySugeno:
         np.savez(
             fileNamePath,
             **{
-                f"evec_Theta{theta_N}": e_vec,
-                f"devec_Theta{theta_N}": de_vec,
-                f"Ymat_dKp_Theta{theta_N}": Y_kp,
-                f"Ymat_dKd_Theta{theta_N}": Y_kd,
+                f"evec_Theta_{theta_N}": e_vec,
+                f"devec_Theta_{theta_N}": de_vec,
+                f"Ymat_dKp_Theta_{theta_N}": Y_kp,
+                f"Ymat_dKd_Theta_{theta_N}": Y_kd,
             },
         )
         
