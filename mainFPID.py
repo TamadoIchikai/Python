@@ -370,7 +370,7 @@ def simulation_cost_FuzzyPID(rule_params: np.ndarray, sim_config: dict) -> float
     mfs_e = controller.gen7tri(e_range[0], e_range[1])
     mfs_de = controller.gen7tri(de_range[0], de_range[1])
     
-    nE, nDE = 51, 51  # Reduced resolution for speed
+    nE, nDE = 201, 201  # Reduced resolution for speed
     e_vec = np.linspace(e_range[0], e_range[1], nE)
     de_vec = np.linspace(de_range[0], de_range[1], nDE)
     
@@ -633,8 +633,8 @@ if __name__ == "__main__":
     # Save lookup tables
     e_range, de_range = sim_config['e_range'], sim_config['de_range']
     fs = controller.FuzzySugeno(e_range, de_range, Best_Rules, FIXED_RULE_TABLE_DKD)
-    fs.save_npz(theta_N=1, fileNamePath="FuzzyLogicOut/FuzzySugeno_Optimized_Theta_1.npz", nE=101, nDE=101)
-    fs.save_npz(theta_N=2, fileNamePath="FuzzyLogicOut/FuzzySugeno_Optimized_Theta_2.npz", nE=101, nDE=101)
+    fs.save_npz(theta_N=1, fileNamePath="FuzzyLogicOut/FuzzySugeno_Optimized_Theta_1.npz", nE=201, nDE=201)
+    fs.save_npz(theta_N=2, fileNamePath="FuzzyLogicOut/FuzzySugeno_Optimized_Theta_2.npz", nE=201, nDE=201)
     
     print("\nResults saved to FuzzyLogicOut/")
     

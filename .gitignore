@@ -10,4 +10,3 @@ build/
 !build/docker_Build/
 .venv
 .env_*
-plots/

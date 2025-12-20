@@ -141,8 +141,9 @@ def pid_update(error, I_prev, prev_error, Kp, Ki, Kd, Ts, Kb, outputLimit_low, o
     return u_clipped, I_new, error.copy()
 
 @njit(cache=True)
-def gen7tri(a: float, b: float) -> np.ndarray:
+def gen7tri(range: float) -> np.ndarray:
     """Generate 7 triangular membership function parameters."""
+    a, b = range[0], range(1)
     step = (b - a) / 6.0
     centers = np.zeros(7, dtype=np.float64)
     for i in range(7):
