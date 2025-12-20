@@ -247,7 +247,7 @@ def GBO(nP: int, MaxIt: int, lb: np.ndarray, ub: np.ndarray, dim: int,
     
     # Save final results
     try:
-        sio.savemat('BestRules_hist.mat', {'Best_Rules_hist': Best_Rules_hist})
+        sio.savemat('FuzzyLogicOut/BestRules_hist.mat', {'Best_Rules_hist': Best_Rules_hist})
     except Exception as e:
         print(f"Warning: Failed to save BestRules_hist.mat: {e}")
     

@@ -104,7 +104,7 @@ def run_simulation(use_fpid=True, label="Default", seed=1):
     
     # Simulation parameters
     SAMPLE_TIME = 0.001
-    STOP_TIME = 30.0
+    STOP_TIME = 20.0
     seed = 3
     rng = np.random.default_rng(seed)
 

@@ -140,20 +140,28 @@ def pid_update(error, I_prev, prev_error, Kp, Ki, Kd, Ts, Kb, outputLimit_low, o
     
     return u_clipped, I_new, error.copy()
 
-
-
-def gen7tri(rng):
-    a, b = rng
+@njit(cache=True)
+def gen7tri(a: float, b: float) -> np.ndarray:
+    """Generate 7 triangular membership function parameters."""
     step = (b - a) / 6.0
-    centers = np.linspace(a, b, 7)
-    mfs = np.zeros((7, 3))
+    centers = np.zeros(7, dtype=np.float64)
+    for i in range(7):
+        centers[i] = a + i * step
+    
+    mfs = np.zeros((7, 3), dtype=np.float64)
     for i in range(7):
         if i == 0:
-            mfs[i] = [centers[i], centers[i], centers[i + 1]]
+            mfs[i, 0] = centers[0]
+            mfs[i, 1] = centers[0]
+            mfs[i, 2] = centers[1]
         elif i == 6:
-            mfs[i] = [centers[i - 1], centers[i], centers[i]]
+            mfs[i, 0] = centers[5]
+            mfs[i, 1] = centers[6]
+            mfs[i, 2] = centers[6]
         else:
-            mfs[i] = [centers[i - 1], centers[i], centers[i + 1]]
+            mfs[i, 0] = centers[i - 1]
+            mfs[i, 1] = centers[i]
+            mfs[i, 2] = centers[i + 1]
     return mfs
 
 @njit

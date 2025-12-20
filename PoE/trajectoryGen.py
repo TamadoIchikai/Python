@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from numba import njit
 
 class TrajectoryGen:
     def __init__(self, M, T_d, startTime, stepTimeXY, stepTimeZ, stopTime, seed=1):
@@ -55,23 +56,28 @@ def random_Index_Pair(n=1000, seed=1):
     
     return result
 
-def tic_tac_toe_gen(randomPairIndex, startTime, stepTime, currentTime):
+@njit(cache=True)
+def tic_tac_toe_gen(random_pairs: np.ndarray, startTime: float, 
+                    stepTime: float, currentTime: float) -> tuple:
+
     xList = np.array([0.4, 0.5, 0.6])
     yList = np.array([-0.1, 0.0, 0.1])
     
     elapsed = currentTime - startTime
-    
     current_idx = int(max(0, elapsed) // stepTime)
     
-    if current_idx >= len(randomPairIndex):
-        current_idx = len(randomPairIndex) - 1
-        
-    indices = randomPairIndex[current_idx]
-    return xList[indices[0]], yList[indices[1]]
-
-def zAxisUpDown(zInit, zReach, startTime, stepTime, currentTime):
-    elapsed = currentTime - startTime
+    n_pairs = random_pairs.shape[0]
+    if current_idx >= n_pairs:
+        current_idx = n_pairs - 1
     
+    i0 = random_pairs[current_idx, 0]
+    i1 = random_pairs[current_idx, 1]
+
+    return xList[i0], yList[i1]
+
+@njit(cache=True)
+def zAxisUpDown(zInit: float, zReach: float, startTime: float, stepTime: float, currentTime: float) -> float:
+    elapsed = currentTime - startTime
     time_in_cycle = elapsed % stepTime
     half_step = stepTime / 2.0
 
