@@ -9,7 +9,6 @@ import numpy as np
 import time
 import matplotlib.pyplot as plt
 
-
 def run_simulation(use_fpid=True, label="Default", seed=1):
     """
     Run simulation with optional Fuzzy PID.
@@ -106,7 +105,16 @@ def run_simulation(use_fpid=True, label="Default", seed=1):
     # Simulation parameters
     SAMPLE_TIME = 0.001
     STOP_TIME = 30.0
-    
+    seed = 3
+    rng = np.random.default_rng(seed)
+
+    NOISE = {
+        "used": True,
+        "theta_std": np.deg2rad(0.03),        # joint angle sensor noise [rad]
+        "theta_dot_std": np.deg2rad(0.02),
+        "torque_std": 0.2
+    }
+
     # Initialize states
     Tsb = kine.PoE_transform(S, M, theta_Pose)
     T_d = kine.PoE_transform(S, M, theta_D)
@@ -117,17 +125,19 @@ def run_simulation(use_fpid=True, label="Default", seed=1):
     thetaRun_Actual = theta_Pose.copy()
     thetaDotRun_Actual = np.zeros_like(thetaRun_Actual)
     thetaDotDotRun_Actual = np.zeros_like(thetaDotRun_Actual)
+
+    NOISE_thetaRun_Actual = thetaRun_Actual.copy()
     
     wLim = np.array([1, 2, 2, .2], dtype=np.float64)
     tauLim = np.array([20, 15, 5, 20], dtype=np.float64)
     
     # PID controllers
-    PID_IK_WzXY = controller.PID_Discrete(Kp=80.0, Ki=0.0, Kd=15.0, Ts=SAMPLE_TIME)
-    PID_IK_Z = controller.PID_Discrete(Kp=45.0, Ki=0.0, Kd=5.0, Ts=SAMPLE_TIME)
+    PID_IK_WzXY = controller.PID_Discrete(Kp=100.0, Ki=0.0, Kd=15.0, Ts=SAMPLE_TIME)
+    PID_IK_Z = controller.PID_Discrete(Kp=70.0, Ki=0.0, Kd=5.0, Ts=SAMPLE_TIME)
     
-    PID_Torque_theta_1 = controller.PID_Discrete(Kp=489.76, Ki=0.0, Kd=293.38, Ts=SAMPLE_TIME, outputLimit=(-tauLim[0], tauLim[0]), initial_integral=tauInit[0])
-    PID_Torque_theta_2 = controller.PID_Discrete(Kp=880.28, Ki=0.0, Kd=43.74, Ts=SAMPLE_TIME, outputLimit=(-tauLim[1], tauLim[1]), initial_integral=tauInit[1])
-    PID_Torque_theta_3 = controller.PID_Discrete(Kp=60.0, Ki=0.0, Kd=5.0, Ts=SAMPLE_TIME, outputLimit=(-tauLim[2], tauLim[2]), initial_integral=tauInit[2])
+    PID_Torque_theta_1 = controller.PID_Discrete(Kp=80.0, Ki=0.0, Kd=60.0, Ts=SAMPLE_TIME, outputLimit=(-tauLim[0], tauLim[0]), initial_integral=tauInit[0])
+    PID_Torque_theta_2 = controller.PID_Discrete(Kp=150.0, Ki=0.0, Kd=43.74, Ts=SAMPLE_TIME, outputLimit=(-tauLim[1], tauLim[1]), initial_integral=tauInit[1])
+    PID_Torque_theta_3 = controller.PID_Discrete(Kp=90.0, Ki=0.0, Kd=5.0, Ts=SAMPLE_TIME, outputLimit=(-tauLim[2], tauLim[2]), initial_integral=tauInit[2])
     PID_Torque_theta_4 = controller.PID_Discrete(Kp=40.0, Ki=20.0, Kd=30.0, Ts=SAMPLE_TIME, outputLimit=(-tauLim[3], tauLim[3]), initial_integral=tauInit[3])
 
     
@@ -175,11 +185,16 @@ def run_simulation(use_fpid=True, label="Default", seed=1):
     
     for i in range(n_steps):
         t = i * SAMPLE_TIME
-        
+
+        if NOISE['used']:
+            NOISE_thetaRun_Actual = thetaRun_Actual + rng.normal(0.0, NOISE['theta_std'], size = n_joint)
+            NOISE_thetaDotRun_Actual = thetaDotRun_Actual + rng.normal(0.0, NOISE['theta_dot_std'], size = n_joint) 
+            NOISE_Tsb = kine.PoE_transform(S, M, NOISE_thetaRun_Actual)
+
         R_traj, pos_traj = traj.generate(t)
         T_traj = helper.RpTo_TransMat(R_traj, pos_traj)
         
-        Vs = kine.twist_Error(Tsb, T_traj)
+        Vs = kine.twist_Error(NOISE_Tsb, T_traj) if NOISE['used'] else kine.twist_Error(Tsb, T_traj)
         
         Vs_WzXY = Vs[2:5].copy()
         Vs_Z = Vs[5]
@@ -194,8 +209,8 @@ def run_simulation(use_fpid=True, label="Default", seed=1):
         Vs_PID[4] = Vs_PID_WzXY[2]
         Vs_PID[5] = Vs_PID_Z
         
-        Js = kine.jacobian_Space(S, thetaRun_Actual)
-        
+        Js = kine.jacobian_Space(S, NOISE_thetaRun_Actual) if  NOISE['used'] else kine.jacobian_Space(S, thetaRun_Actual)
+
         if not np.all(np.isfinite(Js)):
             print(f"Bad Jacobian at step {i} — aborting")
             break
@@ -211,8 +226,8 @@ def run_simulation(use_fpid=True, label="Default", seed=1):
         
         thetaRun_IK = helper.discrete_Integrator(thetaRun_IK, thetaDotRun_IK, SAMPLE_TIME)
         
-        error_theta = thetaRun_IK - thetaRun_Actual
-        errorDot_theta = thetaDotRun_IK - thetaDotRun_Actual
+        error_theta = thetaRun_IK - NOISE_thetaRun_Actual if NOISE['used'] else (thetaRun_IK - thetaRun_Actual)
+        errorDot_theta = thetaDotRun_IK - NOISE_thetaDotRun_Actual if NOISE['used'] else (thetaDotRun_IK - thetaDotRun_Actual)
         
         # Apply fuzzy adaptation if enabled
         if use_fpid and fuzzy_Theta_1 is not None and fuzzy_Theta_2 is not None:
@@ -515,17 +530,18 @@ def print_summary_statistics(results_pid, results_fpid):
 
 if __name__ == "__main__":
     # Run with standard PID
+    seed = 3
     results_pid = run_simulation(
         use_fpid=False,
         label="Standard PID",
-        seed=3
+        seed=seed
     )
     
     # Run with Fuzzy PID
     results_fpid = run_simulation(
         use_fpid=True,
         label="Fuzzy PID",
-        seed=3
+        seed=seed
     )
     
     # Print summary statistics
