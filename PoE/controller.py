@@ -81,8 +81,8 @@ class FuzzySugeno:
         self.map_val = {"ZO": 0.00, "S": 0.33, "M": 0.66, "L": 1.00} if map_val is None else map_val
 
         # Precompute membership functions
-        self.mfs_e = gen7tri(e_range)
-        self.mfs_de = gen7tri(de_range)
+        self.mfs_e = gen7tri(e_range[0], e_range[1])
+        self.mfs_de = gen7tri(de_range[0], de_range[1])
 
         # Precompute consequent constants
         self.kp_const = build_const_matrix(ruleTable_dKp, self.map_val)
@@ -141,9 +141,8 @@ def pid_update(error, I_prev, prev_error, Kp, Ki, Kd, Ts, Kb, outputLimit_low, o
     return u_clipped, I_new, error.copy()
 
 @njit(cache=True)
-def gen7tri(range: float) -> np.ndarray:
+def gen7tri(a: float, b: float) -> np.ndarray:
     """Generate 7 triangular membership function parameters."""
-    a, b = range[0], range(1)
     step = (b - a) / 6.0
     centers = np.zeros(7, dtype=np.float64)
     for i in range(7):
