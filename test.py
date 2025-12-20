@@ -1,35 +1,26 @@
 import numpy as np
-import matplotlib.pyplot as plt
-import PoE.controller as controller
-import PoE.helper as helper
 
-theta_N = 1
-npz_path = f"FuzzyLogicOut/FuzzySugeno_e_Theta_{theta_N}.npz"
+theta_Pose = np.array([np.deg2rad(0),
+                        np.deg2rad(0),
+                        np.deg2rad(0),
+                                0], dtype=np.float64)
 
-e_range  = (-0.1, 0.1)
-de_range = (-1.0, 1.0)
- 
-ruleTable_dKp = [
-    ["L","L","M","M","S","ZO","ZO"],
-    ["L","M","M","S","ZO","S","ZO"],
-    ["M","M","S","ZO","S","M","M"],
-    ["M","S","ZO","ZO","ZO","S","M"],
-    ["M","S","ZO","S","M","M","L"],
-    ["ZO","S","M","S","M","L","L"],
-    ["ZO","ZO","M","M","L","L","L"],
-]
-ruleTable_dKd = [
-    ["L","M","M","S","M","M","L"],
-    ["M","S","S","ZO","S","S","M"],
-    ["M","S","ZO","ZO","ZO","S","M"],
-    ["S","ZO","ZO","ZO","ZO","ZO","S"],
-    ["M","S","ZO","ZO","ZO","S","M"],
-    ["M","S","S","ZO","S","S","M"],
-    ["L","M","M","S","M","M","L"],
-]
+rng = np.random.default_rng(2)
 
-fs = controller.FuzzySugeno(e_range, de_range, ruleTable_dKp, ruleTable_dKd)
+NOISE = {
+    "theta_std": np.deg2rad(0.05),        # joint angle sensor noise [rad]
+    "theta_dot_std": np.deg2rad(0.10),    # joint velocity sensor noise [rad/s]
+    "torque_std": 0.40,                   # actuator torque disturbance [Nm]
+    "ext_wrench_std": np.array([          # external wrench at the tool [Nx,Ny,Nz,Tx,Ty,Tz]
+        0.0, 0.0, 0.0, 0.05, 0.05, 0.05
+    ], dtype=np.float64),
+    "use_measured_for_jacobian": True     # use noisy joints for Js as well
+}
 
-fs.save_npz(theta_N=theta_N, fileNamePath=npz_path or ".", nE=101, nDE=101)
+n_joint = theta_Pose.size
 
-helper.plot_3d_heatmaps(theta_N=theta_N, npz_path=npz_path)
+NOISE_thetaRun_Actual = theta_Pose + rng.normal(0.0, NOISE['theta_std'], size = n_joint)
+
+print(rng.normal(0.0, NOISE["torque_std"], size=n_joint))
+
+print(NOISE_thetaRun_Actual)

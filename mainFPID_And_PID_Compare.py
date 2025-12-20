@@ -248,6 +248,10 @@ def run_simulation(use_fpid=True, label="Default", seed=1):
         torqueEffort[1] = PID_Torque_theta_2.update(error_theta[1])
         torqueEffort[2] = PID_Torque_theta_3.update(error_theta[2])
         torqueEffort[3] = PID_Torque_theta_4.update(error_theta[3])
+
+        torqueNoise = rng.normal(0.0, NOISE['torque_std'], size = n_joint)
+
+        torqueEffort = np.clip(torqueEffort + torqueNoise, -tauLim, tauLim) if NOISE['used'] else torqueEffort 
         
         thetaDotDotRun_Actual = dyna.forward_Dynamics(
             S, MList, GList, thetaRun_Actual, thetaDotRun_Actual, torqueEffort, g, Ftip
