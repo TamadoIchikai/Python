@@ -584,12 +584,6 @@ if __name__ == "__main__":
           f"IAE={sim_config['w_IAE']}, ISCO={sim_config['w_ISCO']}")
     print("=" * 70)
     
-    # Confirm
-    user_input = input("\nStart optimization? (y/n): ").strip().lower()
-    if user_input != 'y':
-        print("Cancelled.")
-        exit()
-    
     # Run GBO
     print("\n" + "=" * 70)
     print("STARTING GBO OPTIMIZATION...")
