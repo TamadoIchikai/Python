@@ -563,8 +563,8 @@ if __name__ == "__main__":
     default_cost, eval_time = test_evaluation(default_params, sim_config, "Default Rules")
     
     # GBO parameters
-    nP = 12
-    MaxIt = 100
+    nP = 16
+    MaxIt = 1000
     dim = 49
     lb = np.ones(dim, dtype=np.float64)
     ub = np.ones(dim, dtype=np.float64) * 4
