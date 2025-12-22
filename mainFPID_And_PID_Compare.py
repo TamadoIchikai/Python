@@ -8,6 +8,8 @@ import PoE.controller as controller
 import numpy as np
 import time
 import matplotlib.pyplot as plt
+import os
+import sys
 
 def run_simulation(use_fpid=True, label="Default", seed=1):
     """
@@ -530,9 +532,15 @@ def print_summary_statistics(results_pid, results_fpid):
     print(f"Y-axis RMSE improvement: {improvement_y_rmse:+.2f}%")
     
     print("="*80)
+    
+
 
 
 if __name__ == "__main__":
+    os.makedirs("FuzzyLogicOut", exist_ok=True)
+    log_file = "FuzzyLogicOut/optimization_log.txt"
+    sys.stdout = helper.DualLogger(log_file)
+
     # Run with standard PID
     seed = 3
     results_pid = run_simulation(
@@ -553,7 +561,8 @@ if __name__ == "__main__":
     
     # Create comparison plots
     plot_comparison(results_pid, results_fpid)
-    
+    sys.stdout = sys.__stdout__
+    sys.stdout.write("✓ Log saved to FuzzyLogicOut/optimization_log.txt\n")   
     # Plot adaptive gains
     if results_fpid['use_fpid']:
         plot_adaptive_gains(results_fpid)
