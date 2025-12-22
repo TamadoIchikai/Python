@@ -19,6 +19,7 @@ Higher ISCO weight -> Smoother control, less aggressive, better noise rejection
 import numpy as np
 import time
 import os
+import sys
 from numba import njit
 
 # Import existing modules
@@ -34,61 +35,73 @@ from PoE.optimizer import GBO
 # FIXED RULE TABLES AND CONSTANTS
 # =============================================================================
 
-# Fixed dKd rule table (symmetric, NOT optimized)
-FIXED_RULE_TABLE_DKD = [
-    ["L","M","M","S","M","M","L"],
-    ["M","S","S","ZO","S","S","M"],
-    ["M","S","ZO","ZO","ZO","S","M"],
-    ["S","ZO","ZO","ZO","ZO","ZO","S"],
-    ["M","S","ZO","ZO","ZO","ZO","M"],
-    ["M","S","S","ZO","S","S","M"],
-    ["L","M","M","S","M","M","L"],
-]
-
 # Output labels: index 1->ZO, 2->S, 3->M, 4->L
 LABELS_OUT = ["ZO", "S", "M", "L"]
 MAP_VAL = {"ZO": 0.00, "S": 0.33, "M": 0.66, "L": 1.00}
-
-# Pre-compute fixed dKd matrix
-FIXED_DKD_MATRIX = np.array([
-    [MAP_VAL[FIXED_RULE_TABLE_DKD[i][j]] for j in range(7)] for i in range(7)
-], dtype=np.float64)
 
 # =============================================================================
 # HELPER FUNCTIONS FOR RULE TABLE ENCODING/DECODING
 # =============================================================================
 
-def decode_rules_from_params(params: np.ndarray) -> list:
-    """Convert 49 optimization parameters (1-4) to 7x7 rule table strings."""
+def decode_rules_from_params(params: np.ndarray) -> tuple:
+    """Convert 98 optimization parameters to two 7x7 rule tables (dKp, dKd)."""
     params_int = np.round(params).astype(int)
     params_int = np.clip(params_int, 1, 4)
-    rule_indices = params_int.reshape(7, 7)
     
-    rule_table = []
+    # First 49 params -> dKp
+    dkp_indices = params_int[:49].reshape(7, 7)
+    dkp_table = []
     for i in range(7):
-        row = [LABELS_OUT[rule_indices[i, j] - 1] for j in range(7)]
-        rule_table.append(row)
-    return rule_table
+        row = [LABELS_OUT[dkp_indices[i, j] - 1] for j in range(7)]
+        dkp_table.append(row)
+    
+    # Next 49 params -> dKd
+    dkd_indices = params_int[49:98].reshape(7, 7)
+    dkd_table = []
+    for i in range(7):
+        row = [LABELS_OUT[dkd_indices[i, j] - 1] for j in range(7)]
+        dkd_table.append(row)
+    
+    return dkp_table, dkd_table
 
-def encode_rules_to_params(rule_table: list) -> np.ndarray:
-    """Convert 7x7 rule table to 49 parameters."""
+def encode_rules_to_params(dkp_table: list, dkd_table: list) -> np.ndarray:
+    """Convert two 7x7 rule tables to 98 parameters."""
     label_to_idx = {"ZO": 1, "S": 2, "M": 3, "L": 4}
-    params = np.zeros(49, dtype=np.float64)
+    params = np.zeros(98, dtype=np.float64)
+    
+    # Encode dKp (0-48)
     for i in range(7):
         for j in range(7):
-            params[i * 7 + j] = label_to_idx[rule_table[i][j]]
+            params[i * 7 + j] = label_to_idx[dkp_table[i][j]]
+    
+    # Encode dKd (49-97)
+    for i in range(7):
+        for j in range(7):
+            params[49 + i * 7 + j] = label_to_idx[dkd_table[i][j]]
+    
     return params
 
 @njit(cache=True)
-def params_to_const_matrix(params: np.ndarray) -> np.ndarray:
-    """Convert 49 parameters directly to numeric 7x7 constant matrix (Numba compatible)."""
+def params_to_const_matrices(params: np.ndarray) -> tuple:
+    """Convert 98 parameters to two numeric 7x7 constant matrices (dKp, dKd)."""
     val_map = np.array([0.00, 0.33, 0.66, 1.00], dtype=np.float64)
-    out = np.zeros((7, 7), dtype=np.float64)
+    
+    kp_out = np.zeros((7, 7), dtype=np.float64)
+    kd_out = np.zeros((7, 7), dtype=np.float64)
+    
+    # dKp (first 49)
     for i in range(49):
         idx = int(np.round(params[i]))
-        idx = max(1, min(4, idx)) - 1  # Clip to 0-3
-        out[i // 7, i % 7] = val_map[idx]
-    return out
+        idx = max(1, min(4, idx)) - 1
+        kp_out[i // 7, i % 7] = val_map[idx]
+    
+    # dKd (next 49)
+    for i in range(49):
+        idx = int(np.round(params[49 + i]))
+        idx = max(1, min(4, idx)) - 1
+        kd_out[i // 7, i % 7] = val_map[idx]
+    
+    return kp_out, kd_out
 
 def print_rule_table(rule_table: list, title: str = "Rule Table"):
     """Pretty print a 7x7 rule table."""
@@ -111,40 +124,42 @@ def print_rule_table(rule_table: list, title: str = "Rule Table"):
 def simulation_loop_fuzzy(
     # Robot configuration
     S: np.ndarray, M: np.ndarray, MList: np.ndarray, GList: np.ndarray,
-    g: np.ndarray, Ftip: np.ndarray, theta_Pose: np.ndarray,
+    g: np.ndarray, Ftip: np.ndarray, theta_Pose: np.ndarray, theta_D: np.ndarray,
     tauLim: np.ndarray, tauInit: np.ndarray, wLim: np.ndarray,
     # Simulation params
     SAMPLE_TIME: float, n_steps: int,
     # Trajectory params
-    random_pairs: np.ndarray, start_time: float, step_time_xy: float,
+    random_pairs: np.ndarray, seed:int, start_time: float, step_time_xy: float,
     step_time_z: float, z_init: float, z_reach: float,
     # Fuzzy lookup tables (pre-computed)
     e_vec: np.ndarray, de_vec: np.ndarray, Y_kp: np.ndarray, Y_kd: np.ndarray,
     # Base PID gains
     Kp_base_1: float, Kd_base_1: float, Kp_base_2: float, Kd_base_2: float,
-    # Gain scaling factors (fuzzy output 0-1 multiplied by these)
-    dKp_scale_1: float, dKd_scale_1: float, dKp_scale_2: float, dKd_scale_2: float,
+    # Noise parameters
+    noise_used: bool, theta_std: float, theta_dot_std: float, torque_std: float,
 ) -> tuple:
     """
     Numba-optimized simulation loop with fuzzy PID control.
     Returns: (ISE_x, ISE_y, ITAE_x, ITAE_y, IAE_x, IAE_y, ISCO)
     """
     TRAJ_START = 2.0
+    if noise_used:
+        np.random.seed(seed)
     
     # Initialize states
+    n_joint = theta_Pose.size
     thetaRun_IK = theta_Pose.copy()
     thetaRun_Actual = theta_Pose.copy()
     thetaDotRun_Actual = np.zeros(4, dtype=np.float64)
-    
+
+    T_d = kine.PoE_transform(S, M, theta_D)
+    Tsb = kine.PoE_transform(S, M, theta_Pose)
+
+    NOISE_thetaRun_Actual = thetaRun_Actual.copy()
     # PID states
     IK_WzXY_prev_error = np.zeros(3, dtype=np.float64)
     IK_Z_prev_error = 0.0
-    Torque_prev_error = np.zeros(4, dtype=np.float64)
     Torque_I = tauInit.copy()
-    
-    # Fuzzy derivative states
-    prev_error_theta_1 = 0.0
-    prev_error_theta_2 = 0.0
     
     # Cost accumulators
     ISE_x, ISE_y = 0.0, 0.0
@@ -171,19 +186,17 @@ def simulation_loop_fuzzy(
             x_traj, y_traj = trajGen.tic_tac_toe_gen(random_pairs, start_time, step_time_xy, t)
             z_traj = trajGen.zAxisUpDown(z_init, z_reach, start_time, step_time_z, t)
             pos_traj = np.array([x_traj, y_traj, z_traj], dtype=np.float64)
-        
-        # Build trajectory transform
-        T_traj = np.eye(4, dtype=np.float64)
-        T_traj[0, 3] = pos_traj[0]
-        T_traj[1, 3] = pos_traj[1]
-        T_traj[2, 3] = pos_traj[2]
-        
-        # Current robot transform
+
+        if noise_used:
+            NOISE_thetaRun_Actual = thetaRun_Actual + np.random.normal(0.0, theta_std, size = n_joint)
+            NOISE_thetaDotRun_Actual = thetaDotRun_Actual + np.random.normal(0.0, theta_dot_std, size = n_joint) 
+            NOISE_Tsb = kine.PoE_transform(S, M, NOISE_thetaRun_Actual)
+    
+        T_traj = helper.RpTo_TransMat(T_d[:3, :3], pos_traj)
         Tsb = kine.PoE_transform(S, M, thetaRun_Actual)
         
-        # --- Inverse Kinematics with PID ---
-        Vs = kine.twist_Error(Tsb, T_traj)
-        
+        Vs = kine.twist_Error(NOISE_Tsb, T_traj) if noise_used else kine.twist_Error(Tsb, T_traj)
+
         # IK PID for WzXY
         Vs_WzXY = Vs[2:5].copy()
         d_err_WzXY = (Vs_WzXY - IK_WzXY_prev_error) / SAMPLE_TIME
@@ -201,7 +214,9 @@ def simulation_loop_fuzzy(
         Vs_PID[5] = Vs_PID_Z
         
         # Jacobian and velocity IK
-        Js = kine.jacobian_Space(S, thetaRun_Actual)
+        Js = kine.jacobian_Space(S, NOISE_thetaRun_Actual) if  noise_used else kine.jacobian_Space(S, thetaRun_Actual)
+        if not np.all(np.isfinite(Js)):
+            return 1e10, 1e10, 1e10, 1e10, 1e10, 1e10, 1e10
         JsInv = helper.dls_inverse(Js, 1e-3)
         thetaDotRun_IK = JsInv @ Vs_PID
         
@@ -210,51 +225,44 @@ def simulation_loop_fuzzy(
             thetaDotRun_IK[j] = max(-wLim[j], min(wLim[j], thetaDotRun_IK[j]))
         
         # Integrate IK
-        thetaRun_IK = thetaRun_IK + thetaDotRun_IK * SAMPLE_TIME
+        thetaRun_IK = helper.discrete_Integrator(thetaRun_IK, thetaDotRun_IK, SAMPLE_TIME)
         
         # --- Fuzzy PID Torque Control ---
-        error_theta = thetaRun_IK - thetaRun_Actual
-        
-        # Error derivatives for fuzzy lookup
-        de_theta_1 = (error_theta[0] - prev_error_theta_1) / SAMPLE_TIME
-        de_theta_2 = (error_theta[1] - prev_error_theta_2) / SAMPLE_TIME
-        
+        error_theta = thetaRun_IK - NOISE_thetaRun_Actual if noise_used else (thetaRun_IK - thetaRun_Actual)
+        errorDot_theta = thetaDotRun_IK - NOISE_thetaDotRun_Actual if noise_used else (thetaDotRun_IK - thetaDotRun_Actual)
+ 
         # Fuzzy lookup (bilinear interpolation)
-        dKp_1_norm = interp2d_scalar(error_theta[0], de_theta_1, e_vec, de_vec, Y_kp)
-        dKd_1_norm = interp2d_scalar(error_theta[0], de_theta_1, e_vec, de_vec, Y_kd)
-        dKp_2_norm = interp2d_scalar(error_theta[1], de_theta_2, e_vec, de_vec, Y_kp)
-        dKd_2_norm = interp2d_scalar(error_theta[1], de_theta_2, e_vec, de_vec, Y_kd)
+        dKp_1_norm = interp2d_scalar(error_theta[0], errorDot_theta[0] , e_vec, de_vec, Y_kp)
+        dKd_1_norm = interp2d_scalar(error_theta[0], errorDot_theta[0], e_vec, de_vec, Y_kd)
+        dKp_2_norm = interp2d_scalar(error_theta[1], errorDot_theta[1], e_vec, de_vec, Y_kp)
+        dKd_2_norm = interp2d_scalar(error_theta[1], errorDot_theta[1], e_vec, de_vec, Y_kd)
         
         # Compute actual gains
-        Kp_1 = Kp_base_1 + dKp_1_norm * dKp_scale_1
-        Kd_1 = Kd_base_1 + dKd_1_norm * dKd_scale_1
-        Kp_2 = Kp_base_2 + dKp_2_norm * dKp_scale_2
-        Kd_2 = Kd_base_2 + dKd_2_norm * dKd_scale_2
-        
-        # Torque PID
-        d_err_torque = (error_theta - Torque_prev_error) / SAMPLE_TIME
-        
+        Kp_1 = Kp_base_1 * dKp_1_norm 
+        Kd_1 = Kd_base_1 * dKd_1_norm
+        Kp_2 = Kp_base_2 * dKp_2_norm 
+        Kd_2 = Kd_base_2 * dKd_2_norm  
+
         # Theta 1 (Fuzzy)
-        u1 = Kp_1 * error_theta[0] + Kd_1 * d_err_torque[0]
+        u1 = Kp_1 * error_theta[0] + Kd_1 * errorDot_theta[0]
         torqueEffort[0] = max(-tauLim[0], min(tauLim[0], u1))
         
         # Theta 2 (Fuzzy)
-        u2 = Kp_2 * error_theta[1] + Kd_2 * d_err_torque[1]
+        u2 = Kp_2 * error_theta[1] + Kd_2 * errorDot_theta[1]
         torqueEffort[1] = max(-tauLim[1], min(tauLim[1], u2))
         
         # Theta 3 (Fixed PD)
-        u3 = Kp_3 * error_theta[2] + Kd_3 * d_err_torque[2]
+        u3 = Kp_3 * error_theta[2] + Kd_3 * errorDot_theta[2]
         torqueEffort[2] = max(-tauLim[2], min(tauLim[2], u3))
         
         # Theta 4 (Fixed PID)
         Torque_I[3] = Torque_I[3] + error_theta[3] * SAMPLE_TIME
-        u4 = Kp_4 * error_theta[3] + Ki_4 * Torque_I[3] + Kd_4 * d_err_torque[3]
+        u4 = Kp_4 * error_theta[3] + Ki_4 * Torque_I[3] + Kd_4 * errorDot_theta[3]
         torqueEffort[3] = max(-tauLim[3], min(tauLim[3], u4))
-        
-        Torque_prev_error = error_theta.copy()
-        prev_error_theta_1 = error_theta[0]
-        prev_error_theta_2 = error_theta[1]
-        
+
+        torqueNoise = np.random.normal(0.0, torque_std, size = n_joint)
+        torqueEffort = np.clip(torqueEffort + torqueNoise, -tauLim, tauLim) if noise_used else torqueEffort 
+ 
         # --- Forward Dynamics ---
         thetaDotDotRun = dyna.forward_Dynamics(
             S, MList, GList, thetaRun_Actual, thetaDotRun_Actual, torqueEffort, g, Ftip
@@ -358,9 +366,7 @@ def simulation_cost_FuzzyPID(rule_params: np.ndarray, sim_config: dict) -> float
     - Higher w_IAE:  Balanced tracking
     - Higher w_ISCO: Smoother control, better noise rejection
     """
-    # Build fuzzy lookup table from parameters
-    kp_const = params_to_const_matrix(rule_params)
-    kd_const = FIXED_DKD_MATRIX
+    kp_const, kd_const = params_to_const_matrices(rule_params)
     
     # Get config
     e_range = sim_config['e_range']
@@ -379,16 +385,16 @@ def simulation_cost_FuzzyPID(rule_params: np.ndarray, sim_config: dict) -> float
     # Run simulation
     ISE_x, ISE_y, ITAE_x, ITAE_y, IAE_x, IAE_y, ISCO = simulation_loop_fuzzy(
         sim_config['S'], sim_config['M'], sim_config['MList'], sim_config['GList'],
-        sim_config['g'], sim_config['Ftip'], sim_config['theta_Pose'],
+        sim_config['g'], sim_config['Ftip'], sim_config['theta_Pose'], sim_config['theta_D'], 
         sim_config['tauLim'], sim_config['tauInit'], sim_config['wLim'],
         sim_config['SAMPLE_TIME'], sim_config['n_steps'],
-        sim_config['random_pairs'], 2.0, 3.0, 1.5,
+        sim_config['random_pairs'], sim_config['seed'], 2.0, 3.0, 1.5,
         sim_config['z_init'], sim_config['z_reach'],
         e_vec, de_vec, Y_kp, Y_kd,
         sim_config['Kp_base_1'], sim_config['Kd_base_1'],
         sim_config['Kp_base_2'], sim_config['Kd_base_2'],
-        sim_config['dKp_scale_1'], sim_config['dKd_scale_1'],
-        sim_config['dKp_scale_2'], sim_config['dKd_scale_2'],
+        sim_config['NOISE']['used'], sim_config['NOISE']['theta_std'],
+        sim_config['NOISE']['theta_dot_std'], sim_config['NOISE']['torque_std'],
     )
     
     # Weighted cost combination
@@ -416,9 +422,14 @@ def setup_simulation_config():
     d1, d2, d3 = 0.284, 0.1, 0.334
     a1, b1, a2, b2 = 0.035, 0.095, 0.02, 0.08
     r3, c1, c2 = 0.033, 0.05, 0.08
-    
+
     theta_Pose = np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float64)
-    
+
+    theta_D= np.array([np.deg2rad(0),
+                    np.deg2rad(0),
+                    np.deg2rad(0),
+                                0.4], dtype=np.float64)
+   
     # Screw axis setup
     q = np.array([[0, l1, l1+l2, l1+l2],
                   [0, 0, 0, 0],
@@ -433,6 +444,7 @@ def setup_simulation_config():
     
     S = lie.compute_ScrewMat(w, q, 3, -3)
     
+        
     # Dynamics
     m1, m2, m3, m4 = 3.0, 2.0, 1.5, 1.5
     g = np.array([0, 0, -9.8], dtype=np.float64)
@@ -461,17 +473,26 @@ def setup_simulation_config():
     n_steps = int(TIME_STOP / SAMPLE_TIME)
     
     # Pre-compute trajectory
-    random_pairs = trajGen.random_Index_Pair(n=1000, seed=3)
+    seed = 3
+    random_pairs = trajGen.random_Index_Pair(n=1000, seed=seed)
+
+    NOISE = {
+        "used": False,
+        "theta_std": np.deg2rad(0.005),        # joint angle sensor noise [rad]
+        "theta_dot_std": np.deg2rad(0.005),
+        "torque_std": 0.2
+    }
     
     return {
         'S': S, 'M': M, 'MList': MList, 'GList': GList,
-        'g': g, 'Ftip': Ftip, 'theta_Pose': theta_Pose,
+        'g': g, 'Ftip': Ftip, 'theta_Pose': theta_Pose, 'theta_D': theta_D,
         'tauLim': np.array([20.0, 15.0, 5.0, 20.0]),
         'tauInit': tauInit,
         'wLim': np.array([1.0, 2.0, 2.0, 0.2]),
         'SAMPLE_TIME': SAMPLE_TIME,
         'n_steps': n_steps,
         'random_pairs': random_pairs,
+        'seed': seed,
         'z_init': d1 + d2,
         'z_reach': d1 + d2 - 0.1,
         # Fuzzy parameters
@@ -480,17 +501,15 @@ def setup_simulation_config():
         # Base PID gains
         'Kp_base_1': 489.76, 'Kd_base_1': 293.38,
         'Kp_base_2': 880.28, 'Kd_base_2': 43.74,
-        # Fuzzy gain scaling
-        'dKp_scale_1': 200.0, 'dKd_scale_1': 50.0,
-        'dKp_scale_2': 150.0, 'dKd_scale_2': 40.0,
         # Cost weights
         'w_ISE': 0.3, 'w_ITAE': 0.7, 'w_IAE': 0.8, 'w_ISCO': 0.01,
+        'NOISE': NOISE
     }
 
 
-def get_default_dKp_rules():
-    """Default dKp rule table for comparison."""
-    return [
+def get_default_rules():
+    """Default rule tables for comparison."""
+    dkp = [
         ["L","L","M","M","S","ZO","ZO"],
         ["L","M","M","S","ZO","S","ZO"],
         ["M","M","S","ZO","S","M","M"],
@@ -499,6 +518,18 @@ def get_default_dKp_rules():
         ["ZO","S","M","S","M","L","L"],
         ["ZO","ZO","M","M","L","L","L"],
     ]
+    
+    dkd = [
+        ["L","M","M","S","M","M","L"],
+        ["M","S","S","ZO","S","S","M"],
+        ["M","S","ZO","ZO","ZO","S","M"],
+        ["S","ZO","ZO","ZO","ZO","ZO","S"],
+        ["M","S","ZO","ZO","ZO","S","M"],
+        ["M","S","S","ZO","S","S","M"],
+        ["L","M","M","S","M","M","L"],
+    ]
+    
+    return dkp, dkd
 
 
 # =============================================================================
@@ -511,11 +542,11 @@ def warmup_jit(sim_config):
     print("WARMING UP JIT COMPILATION...")
     print("=" * 70)
     
-    # Create minimal config
     warmup_config = sim_config.copy()
     warmup_config['n_steps'] = 100
     
-    default_params = encode_rules_to_params(get_default_dKp_rules())
+    default_dkp, default_dkd = get_default_rules()
+    default_params = encode_rules_to_params(default_dkp, default_dkd)
     
     start = time.perf_counter()
     _ = simulation_cost_FuzzyPID(default_params, warmup_config)
@@ -524,15 +555,15 @@ def warmup_jit(sim_config):
     print(f"JIT warmup complete in {elapsed:.2f}s")
     print("=" * 70 + "\n")
 
-
 def test_evaluation(rule_params, sim_config, label="Test"):
     """Test single cost evaluation with detailed output."""
     print(f"\n{'='*70}")
     print(f"EVALUATION: {label}")
     print("=" * 70)
     
-    rule_table = decode_rules_from_params(rule_params)
-    print_rule_table(rule_table, "dKp Rule Table")
+    dkp_table, dkd_table = decode_rules_from_params(rule_params)
+    print_rule_table(dkp_table, "dKp Rule Table")
+    print_rule_table(dkd_table, "dKd Rule Table")
     
     start = time.perf_counter()
     cost = simulation_cost_FuzzyPID(rule_params, sim_config)
@@ -546,11 +577,15 @@ def test_evaluation(rule_params, sim_config, label="Test"):
 
 
 if __name__ == "__main__":
+    os.makedirs("FuzzyLogicOut", exist_ok=True)
+    log_file = "FuzzyLogicOut/optimization_log.txt"
+    sys.stdout = helper.DualLogger(log_file)
+    sys.stderr = sys.stdout
+
     print("\n" + "=" * 70)
     print("FUZZY PID RULE TABLE OPTIMIZATION USING GBO")
     print("=" * 70)
-    print("Optimizing: dKp rule table (7x7 = 49 parameters)")
-    print("Fixed: dKd rule table (symmetric pattern)")
+    print("Optimizing: dKp and dKd rules tables (with each rules table is a 7x7 = 49 parameters)")
     print("=" * 70 + "\n")
     
     # Setup
@@ -558,14 +593,14 @@ if __name__ == "__main__":
     warmup_jit(sim_config)
     
     # Test default
-    default_rules = get_default_dKp_rules()
-    default_params = encode_rules_to_params(default_rules)
+    default_dkp, default_dkd = get_default_rules()
+    default_params = encode_rules_to_params(default_dkp, default_dkd)
     default_cost, eval_time = test_evaluation(default_params, sim_config, "Default Rules")
     
     # GBO parameters
-    nP = 16
-    MaxIt = 1000
-    dim = 49
+    nP = 20
+    MaxIt = 25000
+    dim = 98
     lb = np.ones(dim, dtype=np.float64)
     ub = np.ones(dim, dtype=np.float64) * 4
     
@@ -601,8 +636,8 @@ if __name__ == "__main__":
     total_time = time.perf_counter() - start_time
     
     # Results
-    Best_Rules = decode_rules_from_params(Best_Params)
-    
+    Best_dKp, Best_dKd = decode_rules_from_params(Best_Params)
+
     print("\n" + "=" * 70)
     print("OPTIMIZATION COMPLETE!")
     print("=" * 70)
@@ -610,8 +645,8 @@ if __name__ == "__main__":
     print(f"Best cost: {Best_Cost:.6f}")
     print(f"Improvement: {(default_cost - Best_Cost) / default_cost * 100:.2f}%")
     
-    print_rule_table(Best_Rules, "OPTIMIZED dKp Rule Table")
-    print_rule_table(FIXED_RULE_TABLE_DKD, "FIXED dKd Rule Table")
+    print_rule_table(Best_dKp, "OPTIMIZED dKp Rule Table")
+    print_rule_table(Best_dKd, "OPTIMIZED dKd Rule Table")
     
     # Save results
     os.makedirs("FuzzyLogicOut", exist_ok=True)
@@ -619,14 +654,14 @@ if __name__ == "__main__":
     np.savez('FuzzyLogicOut/fuzzy_optimization_results.npz',
              Best_Cost=Best_Cost,
              Best_Params=Best_Params,
-             Best_Rules=np.array(Best_Rules),
-             Fixed_dKd=np.array(FIXED_RULE_TABLE_DKD),
+             Best_dKp=np.array(Best_dKp),
+             Best_dKd=np.array(Best_dKd),
              Convergence=Convergence_curve,
              default_cost=default_cost)
     
     # Save lookup tables
     e_range, de_range = sim_config['e_range'], sim_config['de_range']
-    fs = controller.FuzzySugeno(e_range, de_range, Best_Rules, FIXED_RULE_TABLE_DKD)
+    fs = controller.FuzzySugeno(e_range, de_range, Best_dKp, Best_dKd)
     fs.save_npz(theta_N=1, fileNamePath="FuzzyLogicOut/FuzzySugeno_Optimized_Theta_1.npz", nE=201, nDE=201)
     fs.save_npz(theta_N=2, fileNamePath="FuzzyLogicOut/FuzzySugeno_Optimized_Theta_2.npz", nE=201, nDE=201)
     
@@ -662,5 +697,14 @@ if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("COPY THIS TO YOUR CODE:")
     print("=" * 70)
-    print(f"ruleTable_dKp_optimized = {Best_Rules}")
-    print(f"\nruleTable_dKd = {FIXED_RULE_TABLE_DKD}")
+    print(f"ruleTable_dKp_optimized = {Best_dKp}")
+    print(f"\nruleTable_dKd_optimized = {Best_dKd}")
+
+    # Restore stdout before closing
+    sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
+    try:
+        sys.stdout.write("✓ Log saved to FuzzyLogicOut/optimization_log.txt\n")
+        sys.stdout.close()
+    except:
+        pass

@@ -8,12 +8,10 @@ from mainFPID import (
     setup_simulation_config,
     simulation_cost_FuzzyPID,
     encode_rules_to_params,
-    get_default_dKp_rules,
+    get_default_rules,
     print_rule_table,
-    FIXED_RULE_TABLE_DKD,
-    params_to_const_matrix,
+    params_to_const_matrices,
     interp2d_scalar,
-    FIXED_DKD_MATRIX,
 )
 
 # Extra imports for logging simulation
@@ -29,8 +27,7 @@ save_dir = os.path.dirname(RESULTS_NPZ)
 def simulate_and_log(rule_params: np.ndarray, sim_config: dict, log_stride: int = 5):
     """Run FPID sim and log t, pos_ref, pos_out, err."""
     # Fuzzy LUTs
-    kp_const = params_to_const_matrix(rule_params)
-    kd_const = FIXED_DKD_MATRIX
+    kp_const, kd_const = params_to_const_matrices(rule_params)
     e_range, de_range = sim_config['e_range'], sim_config['de_range']
     mfs_e = controller.gen7tri(e_range[0], e_range[1])
     mfs_de = controller.gen7tri(de_range[0], de_range[1])
@@ -38,18 +35,21 @@ def simulate_and_log(rule_params: np.ndarray, sim_config: dict, log_stride: int 
     e_vec = np.linspace(e_range[0], e_range[1], nE)
     de_vec = np.linspace(de_range[0], de_range[1], nDE)
     Y_kp, Y_kd = controller.eval_grid(e_vec, de_vec, mfs_e, mfs_de, kp_const, kd_const)
+    
+    # Get noise settings from config (match mainFPID)
+    noise_used = sim_config.get('NOISE', {}).get('used', False)
+    theta_std = sim_config.get('NOISE', {}).get('theta_std', 0.0)
+    theta_dot_std = sim_config.get('NOISE', {}).get('theta_dot_std', 0.0)
+    torque_std = sim_config.get('NOISE', {}).get('torque_std', 0.0)
 
     # Unpack config
     S = sim_config['S']; M = sim_config['M']; MList = sim_config['MList']; GList = sim_config['GList']
-    g = sim_config['g']; Ftip = sim_config['Ftip']; theta_Pose = sim_config['theta_Pose']
+    g = sim_config['g']; Ftip = sim_config['Ftip']; theta_Pose = sim_config['theta_Pose']; theta_D = sim_config['theta_D']
     tauLim = sim_config['tauLim']; tauInit = sim_config['tauInit']; wLim = sim_config['wLim']
     SAMPLE_TIME = sim_config['SAMPLE_TIME']; n_steps = sim_config['n_steps']
     random_pairs = sim_config['random_pairs']; z_init = sim_config['z_init']; z_reach = sim_config['z_reach']
     Kp_base_1 = sim_config['Kp_base_1']; Kd_base_1 = sim_config['Kd_base_1']
     Kp_base_2 = sim_config['Kp_base_2']; Kd_base_2 = sim_config['Kd_base_2']
-    dKp_scale_1 = sim_config['dKp_scale_1']; dKd_scale_1 = sim_config['dKd_scale_1']
-    dKp_scale_2 = sim_config['dKp_scale_2']; dKd_scale_2 = sim_config['dKd_scale_2']
-    # reuse trajectory/timing from config instead of re-declaring
     TRAJ_START = sim_config.get('traj_start', 2.0)
     step_time_xy = sim_config.get('step_time_xy', 3.0)
     step_time_z = sim_config.get('step_time_z', 1.5)
@@ -62,14 +62,15 @@ def simulate_and_log(rule_params: np.ndarray, sim_config: dict, log_stride: int 
     IK_Z_prev_error = 0.0
     Torque_prev_error = np.zeros(4, dtype=np.float64)
     Torque_I = tauInit.copy()
-    prev_error_theta_1 = 0.0
-    prev_error_theta_2 = 0.0
 
     # Fixed gains
     Kp_IK_WzXY, Kd_IK_WzXY = 80.0, 15.0
     Kp_IK_Z,   Kd_IK_Z   = 45.0, 5.0
     Kp_3, Kd_3 = 60.0, 5.0
     Kp_4, Ki_4, Kd_4 = 40.0, 20.0, 30.0
+
+    # Desired orientation
+    T_d = kine.PoE_transform(S, M, theta_D)
 
     t_log, pos_ref_log, pos_out_log, err_log = [], [], [], []
 
@@ -84,8 +85,8 @@ def simulate_and_log(rule_params: np.ndarray, sim_config: dict, log_stride: int 
             z_traj = trajGen.zAxisUpDown(z_init, z_reach, TRAJ_START, step_time_z, t)
             pos_traj = np.array([x_traj, y_traj, z_traj], dtype=np.float64)
 
-        T_traj = np.eye(4, dtype=np.float64)
-        T_traj[:3, 3] = pos_traj
+        # Full target transform (use desired orientation from T_d)
+        T_traj = helper.RpTo_TransMat(T_d[:3, :3], pos_traj)
 
         # Current pose
         Tsb = kine.PoE_transform(S, M, thetaRun_Actual)
@@ -109,6 +110,7 @@ def simulate_and_log(rule_params: np.ndarray, sim_config: dict, log_stride: int 
         Vs_PID[2:5] = Vs_PID_WzXY
         Vs_PID[5] = Vs_PID_Z
 
+        # IK velocity
         Js = kine.jacobian_Space(S, thetaRun_Actual)
         JsInv = helper.dls_inverse(Js, 1e-3)
         thetaDotRun_IK = JsInv @ Vs_PID
@@ -117,18 +119,19 @@ def simulate_and_log(rule_params: np.ndarray, sim_config: dict, log_stride: int 
 
         # Fuzzy PID torque
         error_theta = thetaRun_IK - thetaRun_Actual
-        de_theta_1 = (error_theta[0] - prev_error_theta_1) / SAMPLE_TIME
-        de_theta_2 = (error_theta[1] - prev_error_theta_2) / SAMPLE_TIME
+        # Match mainFPID: use IK vel minus actual vel for "de"
+        errorDot_theta = thetaDotRun_IK - thetaDotRun_Actual
 
-        dKp_1_norm = interp2d_scalar(error_theta[0], de_theta_1, e_vec, de_vec, Y_kp)
-        dKd_1_norm = interp2d_scalar(error_theta[0], de_theta_1, e_vec, de_vec, Y_kd)
-        dKp_2_norm = interp2d_scalar(error_theta[1], de_theta_2, e_vec, de_vec, Y_kp)
-        dKd_2_norm = interp2d_scalar(error_theta[1], de_theta_2, e_vec, de_vec, Y_kd)
+        dKp_1_norm = interp2d_scalar(error_theta[0], errorDot_theta[0], e_vec, de_vec, Y_kp)
+        dKd_1_norm = interp2d_scalar(error_theta[0], errorDot_theta[0], e_vec, de_vec, Y_kd)
+        dKp_2_norm = interp2d_scalar(error_theta[1], errorDot_theta[1], e_vec, de_vec, Y_kp)
+        dKd_2_norm = interp2d_scalar(error_theta[1], errorDot_theta[1], e_vec, de_vec, Y_kd)
 
-        Kp_1 = Kp_base_1 + dKp_1_norm * dKp_scale_1
-        Kd_1 = Kd_base_1 + dKd_1_norm * dKd_scale_1
-        Kp_2 = Kp_base_2 + dKp_2_norm * dKp_scale_2
-        Kd_2 = Kd_base_2 + dKd_2_norm * dKd_scale_2
+        # Multiplicative gains (same as mainFPID)
+        Kp_1 = Kp_base_1 * dKp_1_norm
+        Kd_1 = Kd_base_1 * dKd_1_norm
+        Kp_2 = Kp_base_2 * dKp_2_norm
+        Kd_2 = Kd_base_2 * dKd_2_norm
 
         d_err_torque = (error_theta - Torque_prev_error) / SAMPLE_TIME
         u1 = Kp_1 * error_theta[0] + Kd_1 * d_err_torque[0]
@@ -139,8 +142,6 @@ def simulate_and_log(rule_params: np.ndarray, sim_config: dict, log_stride: int 
 
         torqueEffort = np.clip(np.array([u1, u2, u3, u4]), -tauLim, tauLim)
         Torque_prev_error = error_theta.copy()
-        prev_error_theta_1 = error_theta[0]
-        prev_error_theta_2 = error_theta[1]
 
         # Forward dynamics
         thetaDotDotRun = dyna.forward_Dynamics(S, MList, GList, thetaRun_Actual, thetaDotRun_Actual, torqueEffort, g, Ftip)
@@ -257,27 +258,36 @@ def main():
     # Setup simulation config
     sim_config = setup_simulation_config()
 
-    # Default rules and params
-    default_dkp = get_default_dKp_rules()
-    default_params = encode_rules_to_params(default_dkp)
+    # Default rules and params from mainFPID
+    default_dkp, default_dkd = get_default_rules()
+    print_rule_table(default_dkp, "DEFAULT dKp")
+    print_rule_table(default_dkd, "DEFAULT dKd")
+    default_params = encode_rules_to_params(default_dkp, default_dkd)
 
-    # Try to load optimized rules from the last run
+    # Load optimized rules from mainFPID results
     optimized_dkp = None
+    optimized_dkd = None
     optimized_cost = None
     if os.path.exists(RESULTS_NPZ):
         data = np.load(RESULTS_NPZ, allow_pickle=True)
-        if "Best_Rules" in data:
-            optimized_dkp = data["Best_Rules"].tolist()
+        if "Best_dKp" in data and "Best_dKd" in data:
+            optimized_dkp = data["Best_dKp"].tolist()
+            optimized_dkd = data["Best_dKd"].tolist()
+            print_rule_table(optimized_dkp, "OPTIMIZED dKp")
+            print_rule_table(optimized_dkd, "OPTIMIZED dKd")
         if "Best_Cost" in data:
             optimized_cost = float(data["Best_Cost"])
-    if optimized_dkp is None:
-        print("\nOptimized table not available; skipping trajectory comparison.")
+    if optimized_dkp is None or optimized_dkd is None:
+        print("\nOptimized tables not available; running DEFAULT only.")
+        log_default = simulate_and_log(default_params, sim_config, log_stride=5)
+        metrics_def = print_metrics("DEFAULT", log_default["err"])
         print("\nDone.")
         return
 
     print("\nCollecting trajectories for DEFAULT and OPTIMIZED (with logging)...")
-    log_default = simulate_and_log(encode_rules_to_params(default_dkp), sim_config, log_stride=5)
-    log_opt = simulate_and_log(encode_rules_to_params(optimized_dkp), sim_config, log_stride=5)
+    log_default = simulate_and_log(default_params, sim_config, log_stride=5)
+    optimized_params = encode_rules_to_params(optimized_dkp, optimized_dkd)
+    log_opt = simulate_and_log(optimized_params, sim_config, log_stride=5)
 
     metrics_def = print_metrics("DEFAULT", log_default["err"])
     metrics_opt = print_metrics("OPTIMIZED", log_opt["err"])
