@@ -243,7 +243,8 @@ def GBO(nP: int, MaxIt: int, lb: np.ndarray, ub: np.ndarray, dim: int,
         print(f"Iter {it:3d}/{MaxIt} | Best: {Best_Cost:.6f} | "
               f"Eval: {eval_end - eval_start:.2f}s | "
               f"Total: {iter_end - iter_start:.2f}s | "
-              f"Params: [{Best_Rules[0]:.1f}, {Best_Rules[1]:.1f}, {Best_Rules[2]:.1f}, {Best_Rules[3]:.1f}]")
+              f"\nParams:")
+        print_params_visual(Best_Rules)
     
     # Save final results
     try:
@@ -252,3 +253,48 @@ def GBO(nP: int, MaxIt: int, lb: np.ndarray, ub: np.ndarray, dim: int,
         print(f"Warning: Failed to save BestRules_hist.mat: {e}")
     
     return Best_Cost, Best_Rules, Convergence_curve
+
+def print_params_visual(params: np.ndarray):
+    """
+    Print params in a visually structured way.
+    Rules:
+    - dim < 6            -> one line
+    - dim > 6 and odd    -> two largest square matrices
+    - dim > 6 and even   -> normal print
+    """
+    p = np.rint(params).astype(int)
+    dim = p.size
+
+    # Case 1: small vector
+    if dim < 6:
+        print(p)
+        return
+
+    # Case 2: large odd dimension → split into two squares
+    if dim > 6 and dim % 2 == 1:
+        half = dim // 2
+
+        def largest_square(n):
+            k = int(np.floor(np.sqrt(n)))
+            return k, k * k
+
+        k1, n1 = largest_square(half)
+        k2, n2 = largest_square(dim - n1)
+
+        A = p[:n1].reshape(k1, k1)
+        B = p[n1:n1 + n2].reshape(k2, k2)
+        rest = p[n1 + n2:]
+
+        print(f"[Square {k1}x{k1}]")
+        print(A)
+        print(f"\n[Square {k2}x{k2}]")
+        print(B)
+
+        if rest.size > 0:
+            print("\n[Remaining]")
+            print(rest)
+
+        return
+
+    # Case 3: large even dimension → normal print
+    print(p)

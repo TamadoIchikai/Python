@@ -8,9 +8,9 @@ Optimizing: dKp and dKd rules tables (with each rules table is a 7x7 = 49 parame
 ======================================================================
 WARMING UP JIT COMPILATION...
 ======================================================================
-/media/ssd220/robot/mainFPID.py:223: NumbaPerformanceWarning: '@' is faster on contiguous arrays, called on (Array(float64, 2, 'A', False, aligned=True), Array(float64, 1, 'C', False, aligned=True))
+/mnt/sda2/Robotics/SCARA_Robot/Python/mainFPID.py:200: NumbaPerformanceWarning: '@' is faster on contiguous arrays, called on (Array(float64, 2, 'A', False, aligned=True), Array(float64, 1, 'C', False, aligned=True))
   thetaDotRun_IK = JsInv @ Vs_PID
-JIT warmup complete in 9.17s
+JIT warmup complete in 14.23s
 ======================================================================
 
 
@@ -22,44 +22,43 @@ dKp Rule Table:
 ------------------------------------------------------------
 e\de   NL   NM   NS   ZO   PS   PM   PL
 ------------------------------------------------------------
-  NL    L    L    M    M    S   ZO   ZO
-  NM    L    M    M    S   ZO    S   ZO
-  NS    M    M    S   ZO    S    M    M
-  ZO    M    S   ZO   ZO   ZO    S    M
-  PS    M    S   ZO    S    M    M    L
-  PM   ZO    S    M    S    M    L    L
-  PL   ZO   ZO    M    M    L    L    L
+  NL   PL   PL   PM   PM   PS   ZO   ZO
+  NM   PL   PM   PM   PS   ZO   NS   ZO
+  NS   PM   PM   PS   ZO   NS   NS   NM
+  ZO   PM   PS   ZO   NL   ZO   PS   PM
+  PS   NM   NS   NS   ZO   PS   PM   PM
+  PM   ZO   NS   ZO   PS   PM   PM   PL
+  PL   ZO   ZO   PS   PM   PM   PL   PL
 ------------------------------------------------------------
 
 dKd Rule Table:
 ------------------------------------------------------------
 e\de   NL   NM   NS   ZO   PS   PM   PL
 ------------------------------------------------------------
-  NL    L    M    M    S    M    M    L
-  NM    M    S    S   ZO    S    S    M
-  NS    M    S   ZO   ZO   ZO    S    M
-  ZO    S   ZO   ZO   ZO   ZO   ZO    S
-  PS    M    S   ZO   ZO   ZO    S    M
-  PM    M    S    S   ZO    S    S    M
-  PL    L    M    M    S    M    M    L
+  NL   PM   PM   PM   PS   PM   PM   PM
+  NM   PM   PS   PS   ZO   PS   PS   PM
+  NS   PS   ZO   NS   NL   NS   ZO   PS
+  ZO   ZO   NL   NL   NL   NL   NL   ZO
+  PS   PS   ZO   NS   NL   NS   ZO   PS
+  PM   PM   PS   PS   ZO   PS   PS   PM
+  PL   PM   PM   PM   PS   PM   PM   PM
 ------------------------------------------------------------
 
-Cost: 28.501941
-Evaluation time: 3.480s
+Cost: 21.652812
+Evaluation time: 4.628s
 ======================================================================
 
 ======================================================================
 GBO OPTIMIZATION SETTINGS
 ======================================================================
-Population size: 20
-Max iterations: 100
+Population size: 16
+Max iterations: 250
 Dimensions: 98 (7x7 rule table)
-Bounds: [1, 4] (ZO=1, S=2, M=3, L=4)
-Simulation time: 20.0s
-Est. time per evaluation: 3.48s
-Est. time per iteration: 139.2s
-Est. total time: 232.0 minutes
-Cost weights: ISE=0.3, ITAE=0.7, IAE=0.8, ISCO=0.01
+Bounds: [1, 7] ['NL', 'NM', 'NS', 'ZO', 'PS', 'PM', 'PL']
+Est. time per evaluation: 4.63s
+Est. time per iteration: 148.1s
+Est. total time: 617.1 minutes
+Cost weights: ISE=0.3, ITAE=0.7, IAE=0.8
 ======================================================================
 
 ======================================================================
@@ -67,149 +66,50 @@ STARTING GBO OPTIMIZATION...
 ======================================================================
 
 Initializing population...
-Evaluating initial population with 20 workers...
-Initialization done in 7.38s
-Initial Best Cost: 74.689828
+Evaluating initial population with 8 workers...
+Initialization done in 18.96s
+Initial Best Cost: 21.306762
 ------------------------------------------------------------
-Iter   1/100 | Best: 51.971732 | Eval: 7.40s | Total: 7.41s | Params: [3.2, 4.0, 1.0, 4.0]
-Iter   2/100 | Best: 51.971732 | Eval: 7.59s | Total: 7.59s | Params: [3.2, 4.0, 1.0, 4.0]
-Iter   3/100 | Best: 44.397302 | Eval: 7.40s | Total: 7.40s | Params: [1.0, 1.0, 2.2, 1.0]
-Iter   4/100 | Best: 14.768029 | Eval: 7.22s | Total: 7.22s | Params: [2.9, 1.0, 2.7, 2.0]
-Iter   5/100 | Best: 12.678730 | Eval: 7.48s | Total: 7.48s | Params: [3.5, 1.0, 3.2, 2.5]
-Iter   6/100 | Best: 9.977039 | Eval: 7.60s | Total: 7.60s | Params: [4.0, 1.0, 4.0, 4.0]
-Iter   7/100 | Best: 8.336293 | Eval: 7.44s | Total: 7.44s | Params: [3.6, 1.0, 4.0, 4.0]
-Iter   8/100 | Best: 8.336293 | Eval: 7.29s | Total: 7.29s | Params: [3.6, 1.0, 4.0, 4.0]
-Iter   9/100 | Best: 8.226552 | Eval: 7.56s | Total: 7.56s | Params: [3.3, 1.3, 3.7, 4.0]
-Iter  10/100 | Best: 8.226552 | Eval: 7.43s | Total: 7.43s | Params: [3.3, 1.3, 3.7, 4.0]
-Iter  11/100 | Best: 8.226552 | Eval: 7.46s | Total: 7.46s | Params: [3.3, 1.3, 3.7, 4.0]
-Iter  12/100 | Best: 8.226552 | Eval: 7.40s | Total: 7.40s | Params: [3.3, 1.3, 3.7, 4.0]
-Iter  13/100 | Best: 8.037576 | Eval: 7.51s | Total: 7.51s | Params: [3.3, 1.0, 4.0, 3.7]
-Iter  14/100 | Best: 6.849878 | Eval: 7.50s | Total: 7.50s | Params: [2.1, 1.0, 3.2, 3.1]
-Iter  15/100 | Best: 6.849878 | Eval: 7.47s | Total: 7.47s | Params: [2.1, 1.0, 3.2, 3.1]
-Iter  16/100 | Best: 6.708703 | Eval: 7.49s | Total: 7.49s | Params: [2.3, 1.0, 3.6, 2.5]
-Iter  17/100 | Best: 6.708703 | Eval: 7.42s | Total: 7.42s | Params: [2.3, 1.0, 3.6, 2.5]
-Iter  18/100 | Best: 6.708703 | Eval: 7.46s | Total: 7.46s | Params: [2.3, 1.0, 3.6, 2.5]
-Iter  19/100 | Best: 6.708703 | Eval: 7.38s | Total: 7.38s | Params: [2.3, 1.0, 3.6, 2.5]
-Iter  20/100 | Best: 6.708703 | Eval: 7.40s | Total: 7.40s | Params: [2.3, 1.0, 3.6, 2.5]
-Iter  21/100 | Best: 6.503765 | Eval: 7.43s | Total: 7.43s | Params: [2.3, 1.0, 3.6, 2.6]
-Iter  22/100 | Best: 6.503765 | Eval: 7.62s | Total: 7.62s | Params: [2.3, 1.0, 3.6, 2.6]
-Iter  23/100 | Best: 6.503765 | Eval: 7.55s | Total: 7.55s | Params: [2.3, 1.0, 3.6, 2.6]
-Iter  24/100 | Best: 6.503765 | Eval: 7.41s | Total: 7.41s | Params: [2.3, 1.0, 3.6, 2.6]
-Iter  25/100 | Best: 6.353681 | Eval: 7.58s | Total: 7.59s | Params: [1.0, 1.0, 3.1, 1.0]
-Iter  26/100 | Best: 6.218332 | Eval: 7.74s | Total: 7.74s | Params: [1.4, 1.0, 3.3, 1.4]
-Iter  27/100 | Best: 6.218332 | Eval: 7.74s | Total: 7.74s | Params: [1.4, 1.0, 3.3, 1.4]
-Iter  28/100 | Best: 6.218332 | Eval: 7.45s | Total: 7.45s | Params: [1.4, 1.0, 3.3, 1.4]
-Iter  29/100 | Best: 6.131402 | Eval: 7.60s | Total: 7.60s | Params: [1.4, 1.0, 3.0, 1.5]
-Iter  30/100 | Best: 6.131402 | Eval: 7.52s | Total: 7.52s | Params: [1.4, 1.0, 3.0, 1.5]
-Iter  31/100 | Best: 6.131402 | Eval: 7.35s | Total: 7.35s | Params: [1.4, 1.0, 3.0, 1.5]
-Iter  32/100 | Best: 6.087469 | Eval: 7.67s | Total: 7.67s | Params: [1.6, 1.0, 2.9, 1.1]
-Iter  33/100 | Best: 6.031287 | Eval: 7.40s | Total: 7.40s | Params: [1.3, 1.0, 2.6, 1.0]
-Iter  34/100 | Best: 5.865574 | Eval: 7.53s | Total: 7.53s | Params: [1.0, 1.0, 2.6, 1.4]
-Iter  35/100 | Best: 5.688446 | Eval: 7.47s | Total: 7.47s | Params: [1.2, 1.0, 3.0, 1.2]
-Iter  36/100 | Best: 5.688446 | Eval: 7.44s | Total: 7.45s | Params: [1.2, 1.0, 3.0, 1.2]
-Iter  37/100 | Best: 5.688446 | Eval: 7.40s | Total: 7.40s | Params: [1.2, 1.0, 3.0, 1.2]
-Iter  38/100 | Best: 5.688446 | Eval: 7.47s | Total: 7.48s | Params: [1.2, 1.0, 3.0, 1.2]
-Iter  39/100 | Best: 5.688446 | Eval: 7.50s | Total: 7.50s | Params: [1.2, 1.0, 3.0, 1.2]
-Iter  40/100 | Best: 5.688446 | Eval: 7.64s | Total: 7.64s | Params: [1.2, 1.0, 3.0, 1.2]
-Iter  41/100 | Best: 5.688446 | Eval: 7.39s | Total: 7.39s | Params: [1.2, 1.0, 3.0, 1.2]
-Iter  42/100 | Best: 5.676617 | Eval: 7.31s | Total: 7.32s | Params: [1.3, 1.0, 3.1, 1.3]
-Iter  43/100 | Best: 5.606187 | Eval: 7.64s | Total: 7.64s | Params: [1.3, 1.1, 2.5, 1.0]
-Iter  44/100 | Best: 5.606187 | Eval: 7.51s | Total: 7.51s | Params: [1.3, 1.1, 2.5, 1.0]
-Iter  45/100 | Best: 5.475151 | Eval: 7.55s | Total: 7.55s | Params: [1.1, 1.1, 2.1, 1.0]
-Iter  46/100 | Best: 5.465649 | Eval: 7.60s | Total: 7.60s | Params: [1.2, 1.0, 3.3, 1.4]
-Iter  47/100 | Best: 5.456301 | Eval: 7.46s | Total: 7.46s | Params: [1.1, 1.1, 2.0, 1.0]
-Iter  48/100 | Best: 5.339661 | Eval: 7.40s | Total: 7.40s | Params: [1.0, 1.1, 2.0, 1.0]
-Iter  49/100 | Best: 5.339661 | Eval: 7.31s | Total: 7.31s | Params: [1.0, 1.1, 2.0, 1.0]
-Iter  50/100 | Best: 5.339661 | Eval: 7.48s | Total: 7.48s | Params: [1.0, 1.1, 2.0, 1.0]
-Iter  51/100 | Best: 5.339661 | Eval: 7.49s | Total: 7.49s | Params: [1.0, 1.1, 2.0, 1.0]
-Iter  52/100 | Best: 5.339661 | Eval: 7.44s | Total: 7.44s | Params: [1.0, 1.1, 2.0, 1.0]
-Iter  53/100 | Best: 5.339661 | Eval: 7.45s | Total: 7.45s | Params: [1.0, 1.1, 2.0, 1.0]
-Iter  54/100 | Best: 5.339661 | Eval: 7.72s | Total: 7.72s | Params: [1.0, 1.1, 2.0, 1.0]
-Iter  55/100 | Best: 5.208985 | Eval: 7.91s | Total: 7.91s | Params: [1.0, 1.1, 2.1, 1.0]
-Iter  56/100 | Best: 5.208985 | Eval: 7.52s | Total: 7.52s | Params: [1.0, 1.1, 2.1, 1.0]
-Iter  57/100 | Best: 5.208985 | Eval: 7.69s | Total: 7.69s | Params: [1.0, 1.1, 2.1, 1.0]
-Iter  58/100 | Best: 5.034062 | Eval: 7.71s | Total: 7.71s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  59/100 | Best: 5.034062 | Eval: 7.57s | Total: 7.57s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  60/100 | Best: 5.034062 | Eval: 7.53s | Total: 7.53s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  61/100 | Best: 5.034062 | Eval: 7.46s | Total: 7.46s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  62/100 | Best: 5.034062 | Eval: 7.33s | Total: 7.33s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  63/100 | Best: 5.034062 | Eval: 7.32s | Total: 7.32s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  64/100 | Best: 5.034062 | Eval: 7.43s | Total: 7.43s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  65/100 | Best: 5.034062 | Eval: 7.41s | Total: 7.41s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  66/100 | Best: 5.034062 | Eval: 7.61s | Total: 7.61s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  67/100 | Best: 5.034062 | Eval: 7.47s | Total: 7.47s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  68/100 | Best: 5.034062 | Eval: 7.55s | Total: 7.55s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  69/100 | Best: 5.034062 | Eval: 7.36s | Total: 7.36s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  70/100 | Best: 5.034062 | Eval: 7.73s | Total: 7.73s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  71/100 | Best: 5.034062 | Eval: 7.55s | Total: 7.55s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  72/100 | Best: 5.034062 | Eval: 7.49s | Total: 7.49s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  73/100 | Best: 5.034062 | Eval: 7.44s | Total: 7.44s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  74/100 | Best: 5.034062 | Eval: 7.52s | Total: 7.52s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  75/100 | Best: 5.034062 | Eval: 7.42s | Total: 7.42s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  76/100 | Best: 5.034062 | Eval: 7.26s | Total: 7.26s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  77/100 | Best: 5.034062 | Eval: 7.33s | Total: 7.33s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  78/100 | Best: 5.034062 | Eval: 7.45s | Total: 7.45s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  79/100 | Best: 5.034062 | Eval: 7.53s | Total: 7.53s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  80/100 | Best: 5.034062 | Eval: 7.47s | Total: 7.47s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  81/100 | Best: 5.034062 | Eval: 7.42s | Total: 7.42s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  82/100 | Best: 5.034062 | Eval: 7.51s | Total: 7.51s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  83/100 | Best: 5.034062 | Eval: 7.45s | Total: 7.46s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  84/100 | Best: 5.034062 | Eval: 7.37s | Total: 7.37s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  85/100 | Best: 5.034062 | Eval: 7.78s | Total: 7.78s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  86/100 | Best: 5.034062 | Eval: 7.47s | Total: 7.47s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  87/100 | Best: 5.034062 | Eval: 7.31s | Total: 7.31s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  88/100 | Best: 5.034062 | Eval: 7.85s | Total: 7.85s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  89/100 | Best: 5.034062 | Eval: 7.59s | Total: 7.59s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  90/100 | Best: 5.034062 | Eval: 7.65s | Total: 7.65s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  91/100 | Best: 5.034062 | Eval: 7.72s | Total: 7.72s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  92/100 | Best: 5.034062 | Eval: 7.46s | Total: 7.46s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  93/100 | Best: 5.034062 | Eval: 7.37s | Total: 7.37s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  94/100 | Best: 5.034062 | Eval: 7.47s | Total: 7.47s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  95/100 | Best: 5.034062 | Eval: 7.29s | Total: 7.29s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  96/100 | Best: 5.034062 | Eval: 7.27s | Total: 7.27s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  97/100 | Best: 5.034062 | Eval: 7.33s | Total: 7.33s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  98/100 | Best: 5.034062 | Eval: 7.38s | Total: 7.38s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter  99/100 | Best: 5.034062 | Eval: 7.41s | Total: 7.41s | Params: [1.0, 1.0, 1.8, 1.0]
-Iter 100/100 | Best: 5.034062 | Eval: 7.42s | Total: 7.42s | Params: [1.0, 1.0, 1.8, 1.0]
+Iter   1/250 | Best: 20.131064 | Eval: 18.71s | Total: 22.22s | 
+Params: 
 
-======================================================================
-OPTIMIZATION COMPLETE!
-======================================================================
-Total time: 756.2s (12.6 min)
-Best cost: 5.034062
-Improvement: 82.34%
-
-OPTIMIZED dKp Rule Table:
-------------------------------------------------------------
-e\de   NL   NM   NS   ZO   PS   PM   PL
-------------------------------------------------------------
-  NL   ZO   ZO    S   ZO   ZO    M   ZO
-  NM   ZO    M   ZO   ZO    L   ZO   ZO
-  NS   ZO    M   ZO   ZO   ZO   ZO   ZO
-  ZO   ZO   ZO    S   ZO    S   ZO   ZO
-  PS   ZO   ZO   ZO   ZO   ZO    S   ZO
-  PM   ZO   ZO   ZO   ZO   ZO   ZO   ZO
-  PL   ZO    M   ZO   ZO    S   ZO   ZO
-------------------------------------------------------------
-
-OPTIMIZED dKd Rule Table:
-------------------------------------------------------------
-e\de   NL   NM   NS   ZO   PS   PM   PL
-------------------------------------------------------------
-  NL    S   ZO   ZO   ZO   ZO   ZO   ZO
-  NM   ZO   ZO   ZO   ZO   ZO   ZO   ZO
-  NS   ZO    S   ZO   ZO   ZO   ZO   ZO
-  ZO    S   ZO   ZO   ZO   ZO   ZO   ZO
-  PS   ZO   ZO   ZO   ZO   ZO   ZO   ZO
-  PM   ZO   ZO   ZO   ZO   ZO   ZO    S
-  PL   ZO   ZO   ZO   ZO   ZO    M   ZO
-------------------------------------------------------------
-
-Results saved to FuzzyLogicOut/
-
-======================================================================
-COPY THIS TO YOUR CODE:
-======================================================================
-ruleTable_dKp_optimized = [['ZO', 'ZO', 'S', 'ZO', 'ZO', 'M', 'ZO'], ['ZO', 'M', 'ZO', 'ZO', 'L', 'ZO', 'ZO'], ['ZO', 'M', 'ZO', 'ZO', 'ZO', 'ZO', 'ZO'], ['ZO', 'ZO', 'S', 'ZO', 'S', 'ZO', 'ZO'], ['ZO', 'ZO', 'ZO', 'ZO', 'ZO', 'S', 'ZO'], ['ZO', 'ZO', 'ZO', 'ZO', 'ZO', 'ZO', 'ZO'], ['ZO', 'M', 'ZO', 'ZO', 'S', 'ZO', 'ZO']]
-
-ruleTable_dKd_optimized = [['S', 'ZO', 'ZO', 'ZO', 'ZO', 'ZO', 'ZO'], ['ZO', 'ZO', 'ZO', 'ZO', 'ZO', 'ZO', 'ZO'], ['ZO', 'S', 'ZO', 'ZO', 'ZO', 'ZO', 'ZO'], ['S', 'ZO', 'ZO', 'ZO', 'ZO', 'ZO', 'ZO'], ['ZO', 'ZO', 'ZO', 'ZO', 'ZO', 'ZO', 'ZO'], ['ZO', 'ZO', 'ZO', 'ZO', 'ZO', 'ZO', 'S'], ['ZO', 'ZO', 'ZO', 'ZO', 'ZO', 'M', 'ZO']]
+[2 2 5 1 7 1 4 3 3 3 1 1 1 3 1 1 3 3 3 2 2 3 3 2 1 4 3 1 2 1 4 1 2 1 3 1 1
+ 1 1 2 1 4 3 3 2 1 1 2 1 2 4 1 2 1 1 7 2 4 1 3 2 2 1 1 1 1 7 2 6 1 1 3 2 2
+ 1 3 1 4 1 2 1 1 1 4 3 1 3 2 3 1 1 2 1 3 4 3 1 4]
+Process ForkProcess-18:
+Traceback (most recent call last):
+  File "/home/tamadoichikai/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/tamadoichikai/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/tamadoichikai/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/concurrent/futures/process.py", line 252, in _process_worker
+    call_item = call_queue.get(block=True)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tamadoichikai/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/multiprocessing/queues.py", line 103, in get
+    res = self._recv_bytes()
+          ^^^^^^^^^^^^^^^^^^
+  File "/home/tamadoichikai/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/multiprocessing/connection.py", line 216, in recv_bytes
+    buf = self._recv_bytes(maxlength)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tamadoichikai/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/multiprocessing/connection.py", line 430, in _recv_bytes
+    buf = self._recv(4)
+          ^^^^^^^^^^^^^
+  File "/home/tamadoichikai/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/multiprocessing/connection.py", line 395, in _recv
+    chunk = read(handle, remaining)
+            ^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+Traceback (most recent call last):
+  File "/mnt/sda2/Robotics/SCARA_Robot/Python/mainFPID.py", line 615, in <module>
+    Best_Cost, Best_Params, Convergence_curve = GBO(
+                                                ^^^^
+  File "/mnt/sda2/Robotics/SCARA_Robot/Python/PoE/optimizer.py", line 215, in GBO
+    for future in as_completed(futures):
+                  ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tamadoichikai/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/concurrent/futures/_base.py", line 243, in as_completed
+    waiter.event.wait(wait_timeout)
+  File "/home/tamadoichikai/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tamadoichikai/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/threading.py", line 355, in wait
+    waiter.acquire()
+KeyboardInterrupt

@@ -28,6 +28,6 @@ ruleTable_dKd = [
 
 fs = controller.FuzzySugeno(e_range, de_range, ruleTable_dKp, ruleTable_dKd)
 
-fs.save_npz(theta_N=theta_N, fileNamePath=npz_path or ".", nE=101, nDE=101)
+fs.save_npz(theta_N=theta_N, fileNamePath=npz_path or ".", nE=501, nDE=501)
 
 helper.plot_3d_heatmaps(theta_N=theta_N, npz_path=npz_path)

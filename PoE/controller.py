@@ -3,6 +3,7 @@ import numpy as np
 import PoE.helper as helper
 
 from numba import njit
+from numba.experimental import jitclass
 from scipy.interpolate import RegularGridInterpolator
 
 class PID_Discrete:
@@ -73,6 +74,7 @@ class PID_Discrete:
         if u_clipped.size == 1:
             return u_clipped[0]
         return u_clipped
+
 
 class FuzzySugeno:
     def __init__(self, e_range, de_range, ruleTable_dKp, ruleTable_dKd, map_val=None):
@@ -184,7 +186,7 @@ def trimf_batch(x, mfs):
         out[i] = trimf(x, mfs[i])
     return out
 
-@njit
+@njit(cache=True)
 def eval_grid(e_vec, de_vec, mfs_e, mfs_de, kp_const, kd_const):
     mu_e = trimf_batch(e_vec, mfs_e)    # (7, N)
     mu_de = trimf_batch(de_vec, mfs_de)  # (7, M)
@@ -250,9 +252,9 @@ class LookupTable2D:
         # Create interpolator with linear method and clipping bounds
         # Note: RegularGridInterpolator expects table shape to match (len(bp2), len(bp1))
         self._interp = RegularGridInterpolator(
-            (self.bp2, self.bp1),  # (rows, cols) = (de, e)
+            (self.bp1, self.bp2),  # (rows, cols) = (de, e)
             self.table,
-            method='linear',
+            method='nearest',
             bounds_error=False,
             fill_value=None  # Use nearest for extrapolation
         )
@@ -301,7 +303,7 @@ class FuzzyLookupController:
     """
     Controller using pre-computed fuzzy lookup tables for dKp and dKd.
     """
-    def __init__(self, npz_path):
+    def __init__(self, npz_path=None, evec=None, devec=None, Ymat_dKp=None, Ymat_dKd=None):
         """
         Load lookup tables from .npz file.
         
@@ -310,21 +312,31 @@ class FuzzyLookupController:
         npz_path : str
             Path to .npz file containing evec, devec, Ymat_dKp, Ymat_dKd
         """
-        data = np.load(npz_path)
-        
-        # Detect key naming convention
-        keys = list(data.keys())
-        
-        # Find evec and devec keys
-        evec_key = [k for k in keys if 'evec' in k.lower()][0]
-        devec_key = [k for k in keys if 'devec' in k.lower()][0]
-        dkp_key = [k for k in keys if 'dkp' in k.lower()][0]
-        dkd_key = [k for k in keys if 'dkd' in k.lower()][0]
-        
-        evec = data[evec_key]
-        devec = data[devec_key]
-        Ymat_dKp = data[dkp_key]
-        Ymat_dKd = data[dkd_key]
+        if npz_path is not None:
+            data = np.load(npz_path)
+
+            keys = list(data.keys())
+
+            # Detect key naming convention
+            try:
+                evec_key = next(k for k in keys if 'evec' in k.lower())
+                devec_key = next(k for k in keys if 'devec' in k.lower())
+                dkp_key = next(k for k in keys if 'dkp' in k.lower())
+                dkd_key = next(k for k in keys if 'dkd' in k.lower())
+            except StopIteration:
+                raise ValueError("NPZ file is missing required lookup table keys")
+
+            evec = data[evec_key]
+            devec = data[devec_key]
+            Ymat_dKp = data[dkp_key]
+            Ymat_dKd = data[dkd_key]
+
+        else:
+            # npz_path is None → require all arrays explicitly
+            if evec is None or devec is None or Ymat_dKp is None or Ymat_dKd is None:
+                raise ValueError(
+                    "Either provide npz_path or all of: evec, devec, Ymat_dKp, Ymat_dKd"
+                )
         
         self.lut_dKp = LookupTable2D(evec, devec, Ymat_dKp)
         self.lut_dKd = LookupTable2D(evec, devec, Ymat_dKd)
@@ -349,3 +361,165 @@ class FuzzyLookupController:
         dKd = self.lut_dKd(e, de)
         return dKp, dKd
 
+# ------------ Non-class interpolation ------------------
+def load_fuzzy_data(npz_path):
+    """
+    Loads the lookup table data from an NPZ file.
+    Must be called before starting the simulation loop.
+    """
+    if npz_path is None:
+        raise ValueError("npz_path cannot be None")
+        
+    data = np.load(npz_path)
+    keys = list(data.keys())
+    
+    try:
+        evec_key = next(k for k in keys if 'evec' in k.lower())
+        devec_key = next(k for k in keys if 'devec' in k.lower())
+        dkp_key = next(k for k in keys if 'dkp' in k.lower())
+        dkd_key = next(k for k in keys if 'dkd' in k.lower())
+        
+        return (data[evec_key], 
+                data[devec_key], 
+                data[dkp_key], 
+                data[dkd_key])
+    except StopIteration:
+        raise KeyError(f"NPZ file {npz_path} is missing required keys.")
+
+@njit(cache=True)
+def interp2d_nearest(
+    u1: float,
+    u2: float,
+    bp1: np.ndarray,    # e_vec
+    bp2: np.ndarray,    # de_vec
+    table: np.ndarray  # shape: (len(bp1), len(bp2))
+) -> float:
+    """
+    2D lookup table with nearest-neighbor interpolation
+    and clipped extrapolation (Numba-compatible).
+    """
+
+    # ---- clip inputs ----
+    if u1 < bp1[0]:
+        u1 = bp1[0]
+    elif u1 > bp1[-1]:
+        u1 = bp1[-1]
+
+    if u2 < bp2[0]:
+        u2 = bp2[0]
+    elif u2 > bp2[-1]:
+        u2 = bp2[-1]
+
+    # ---- find nearest index in bp1 ----
+    i = np.searchsorted(bp1, u1)
+
+    if i == 0:
+        i_near = 0
+    elif i == bp1.size:
+        i_near = bp1.size - 1
+    else:
+        if abs(u1 - bp1[i - 1]) <= abs(bp1[i] - u1):
+            i_near = i - 1
+        else:
+            i_near = i
+
+    # ---- find nearest index in bp2 ----
+    j = np.searchsorted(bp2, u2)
+
+    if j == 0:
+        j_near = 0
+    elif j == bp2.size:
+        j_near = bp2.size - 1
+    else:
+        if abs(u2 - bp2[j - 1]) <= abs(bp2[j] - u2):
+            j_near = j - 1
+        else:
+            j_near = j
+
+    return table[i_near, j_near]
+
+@njit(cache=True)
+def LookUp2D_Nearest(
+    e: float,
+    de: float,
+    e_vec: np.ndarray,
+    de_vec: np.ndarray,
+    Ymat_dKp: np.ndarray,
+    Ymat_dKd: np.ndarray
+):
+    dKp = interp2d_nearest(e, de, e_vec, de_vec, Ymat_dKp)
+    dKd = interp2d_nearest(e, de, e_vec, de_vec, Ymat_dKd)
+    return dKp, dKd
+
+@njit(cache=True)
+def interp2d_bilinear(
+    u1: float,
+    u2: float,
+    bp1: np.ndarray,   # e_vec
+    bp2: np.ndarray,   # de_vec
+    table: np.ndarray  # shape: (len(bp1), len(bp2))
+) -> float:
+    """
+    2D lookup table with bilinear interpolation and clipped extrapolation.
+    """
+
+    # ---- clip inputs ----
+    if u1 < bp1[0]:
+        u1 = bp1[0]
+    elif u1 > bp1[-1]:
+        u1 = bp1[-1]
+
+    if u2 < bp2[0]:
+        u2 = bp2[0]
+    elif u2 > bp2[-1]:
+        u2 = bp2[-1]
+
+    # ---- find indices ----
+    i = np.searchsorted(bp1, u1) - 1
+    j = np.searchsorted(bp2, u2) - 1
+
+    if i < 0:
+        i = 0
+    elif i > bp1.size - 2:
+        i = bp1.size - 2
+
+    if j < 0:
+        j = 0
+    elif j > bp2.size - 2:
+        j = bp2.size - 2
+
+    # ---- grid points ----
+    x1 = bp1[i]
+    x2 = bp1[i + 1]
+    y1 = bp2[j]
+    y2 = bp2[j + 1]
+
+    z11 = table[i,     j]
+    z12 = table[i,     j + 1]
+    z21 = table[i + 1, j]
+    z22 = table[i + 1, j + 1]
+
+    # ---- weights ----
+    wx = (u1 - x1) / (x2 - x1)
+    wy = (u2 - y1) / (y2 - y1)
+
+    # ---- bilinear interpolation ----
+    return (
+        (1.0 - wx) * (1.0 - wy) * z11 +
+        (1.0 - wx) * wy         * z12 +
+        wx         * (1.0 - wy) * z21 +
+        wx         * wy         * z22
+    )
+
+@njit(cache=True)
+def LookUp2D_Bilinear(
+    e: float,
+    de: float,
+    e_vec: np.ndarray,
+    de_vec: np.ndarray,
+    Ymat_dKp: np.ndarray,
+    Ymat_dKd: np.ndarray
+):
+    dKp = interp2d_bilinear(e, de, e_vec, de_vec, Ymat_dKp)
+    dKd = interp2d_bilinear(e, de, e_vec, de_vec, Ymat_dKd)
+    return dKp, dKd

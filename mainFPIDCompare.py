@@ -1,182 +1,101 @@
 import os
-import time
 import numpy as np
-import matplotlib.pyplot as plt  # added
+import matplotlib.pyplot as plt
 
-# Reuse existing functions/constants from mainFPID.py
 from mainFPID import (
     setup_simulation_config,
-    simulation_cost_FuzzyPID,
-    encode_rules_to_params,
     get_default_rules,
-    print_rule_table,
+    encode_rules_to_params,
     params_to_const_matrices,
-    interp2d_scalar,
+    print_rule_table,
+    simulation_loop_fuzzy,
 )
-
-# Extra imports for logging simulation
 import PoE.controller as controller
-import PoE.trajectoryGen as trajGen
-import PoE.helper as helper
-import PoE.kinematics as kine
-import PoE.dynamics as dyna
 
 RESULTS_NPZ = "FuzzyLogicOut/fuzzy_optimization_results.npz"
+SAVE_DIR = "FuzzyLogicOut"
 
-save_dir = os.path.dirname(RESULTS_NPZ)
-def simulate_and_log(rule_params: np.ndarray, sim_config: dict, log_stride: int = 5):
-    """Run FPID sim and log t, pos_ref, pos_out, err."""
-    # Fuzzy LUTs
+
+def run_with_logging(rule_params: np.ndarray, sim_config: dict):
+    """Run the numba simulation loop and return logs for plotting."""
+    # Build fuzzy LUTs
     kp_const, kd_const = params_to_const_matrices(rule_params)
-    e_range, de_range = sim_config['e_range'], sim_config['de_range']
+    e_range, de_range = sim_config["e_range"], sim_config["de_range"]
     mfs_e = controller.gen7tri(e_range[0], e_range[1])
     mfs_de = controller.gen7tri(de_range[0], de_range[1])
-    nE = nDE = 201
+    nE = nDE = 301  # match mainFPID resolution
     e_vec = np.linspace(e_range[0], e_range[1], nE)
     de_vec = np.linspace(de_range[0], de_range[1], nDE)
     Y_kp, Y_kd = controller.eval_grid(e_vec, de_vec, mfs_e, mfs_de, kp_const, kd_const)
-    
-    # Get noise settings from config (match mainFPID)
-    noise_used = sim_config.get('NOISE', {}).get('used', False)
-    theta_std = sim_config.get('NOISE', {}).get('theta_std', 0.0)
-    theta_dot_std = sim_config.get('NOISE', {}).get('theta_dot_std', 0.0)
-    torque_std = sim_config.get('NOISE', {}).get('torque_std', 0.0)
 
-    # Unpack config
-    S = sim_config['S']; M = sim_config['M']; MList = sim_config['MList']; GList = sim_config['GList']
-    g = sim_config['g']; Ftip = sim_config['Ftip']; theta_Pose = sim_config['theta_Pose']; theta_D = sim_config['theta_D']
-    tauLim = sim_config['tauLim']; tauInit = sim_config['tauInit']; wLim = sim_config['wLim']
-    SAMPLE_TIME = sim_config['SAMPLE_TIME']; n_steps = sim_config['n_steps']
-    random_pairs = sim_config['random_pairs']; z_init = sim_config['z_init']; z_reach = sim_config['z_reach']
-    Kp_base_1 = sim_config['Kp_base_1']; Kd_base_1 = sim_config['Kd_base_1']
-    Kp_base_2 = sim_config['Kp_base_2']; Kd_base_2 = sim_config['Kd_base_2']
-    TRAJ_START = sim_config.get('traj_start', 2.0)
-    step_time_xy = sim_config.get('step_time_xy', 3.0)
-    step_time_z = sim_config.get('step_time_z', 1.5)
+    pos_in, pos_out, _, t_vec = simulation_loop_fuzzy(
+        # Robot configuration
+        S=sim_config["S"],
+        M=sim_config["M"],
+        MList=sim_config["MList"],
+        GList=sim_config["GList"],
+        g=sim_config["g"],
+        Ftip=sim_config["Ftip"],
+        theta_Pose=sim_config["theta_Pose"],
+        T_d=sim_config["T_d"],
+        tauLim=sim_config["tauLim"],
+        tauInit=sim_config["tauInit"],
+        wLim=sim_config["wLim"],
+        # Simulation params
+        SAMPLE_TIME=sim_config["SAMPLE_TIME"],
+        STOP_TIME=sim_config["STOP_TIME"],
+        startTime=sim_config["startTime"],
+        stepTimeXY=sim_config["stepTimeXY"],
+        stepTimeZ=sim_config["stepTimeZ"],
+        randomPairs=sim_config["randomPairs"],
+        # Base PID gain
+        Kp_base_1=sim_config["Kp_base_1"],
+        Kd_base_1=sim_config["Kd_base_1"],
+        Kp_base_2=sim_config["Kp_base_2"],
+        Kd_base_2=sim_config["Kd_base_2"],
+        # IK PID gain
+        Kp_IK_WzXY=sim_config["Kp_IK_WzXY"],
+        Kd_IK_WzXY=sim_config["Kd_IK_WzXY"],
+        Kp_IK_Z=sim_config["Kp_IK_Z"],
+        Kd_IK_Z=sim_config["Kd_IK_Z"],
+        # Torque PID gain
+        Kp_Torque_3=sim_config["Kp_Torque_3"],
+        Kd_Torque_3=sim_config["Kd_Torque_3"],
+        Kp_Torque_4=sim_config["Kp_Torque_4"],
+        Ki_Torque_4=sim_config["Ki_Torque_4"],
+        Kd_Torque_4=sim_config["Kd_Torque_4"],
+        alpha=sim_config["alpha"],
+        beta=sim_config["beta"],
+        # FPID params
+        e_vec=e_vec,
+        de_vec=de_vec,
+        Y_kp=Y_kp,
+        Y_kd=Y_kd,
+        # Noise
+        used_Noise=sim_config["used_Noise"],
+        NOISE_Gen_thetaRun_Actual=sim_config["NOISE_Gen_thetaRun_Actual"],
+        NOISE_Gen_thetaRunDot_Actual=sim_config["NOISE_Gen_thetaRunDot_Actual"],
+    )
 
-    # States
-    thetaRun_IK = theta_Pose.copy()
-    thetaRun_Actual = theta_Pose.copy()
-    thetaDotRun_Actual = np.zeros(4, dtype=np.float64)
-    IK_WzXY_prev_error = np.zeros(3, dtype=np.float64)
-    IK_Z_prev_error = 0.0
-    Torque_prev_error = np.zeros(4, dtype=np.float64)
-    Torque_I = tauInit.copy()
-
-    # Fixed gains
-    Kp_IK_WzXY, Kd_IK_WzXY = 80.0, 15.0
-    Kp_IK_Z,   Kd_IK_Z   = 45.0, 5.0
-    Kp_3, Kd_3 = 60.0, 5.0
-    Kp_4, Ki_4, Kd_4 = 40.0, 20.0, 30.0
-
-    # Desired orientation
-    T_d = kine.PoE_transform(S, M, theta_D)
-
-    t_log, pos_ref_log, pos_out_log, err_log = [], [], [], []
-
-    for i in range(n_steps):
-        t = i * SAMPLE_TIME
-
-        # Trajectory
-        if t < TRAJ_START:
-            pos_traj = M[:3, 3].copy()
-        else:
-            x_traj, y_traj = trajGen.tic_tac_toe_gen(random_pairs, TRAJ_START, step_time_xy, t)
-            z_traj = trajGen.zAxisUpDown(z_init, z_reach, TRAJ_START, step_time_z, t)
-            pos_traj = np.array([x_traj, y_traj, z_traj], dtype=np.float64)
-
-        # Full target transform (use desired orientation from T_d)
-        T_traj = helper.RpTo_TransMat(T_d[:3, :3], pos_traj)
-
-        # Current pose
-        Tsb = kine.PoE_transform(S, M, thetaRun_Actual)
-
-        # Twist error
-        Vs = kine.twist_Error(Tsb, T_traj)
-
-        # IK PID
-        Vs_WzXY = Vs[2:5].copy()
-        d_err_WzXY = (Vs_WzXY - IK_WzXY_prev_error) / SAMPLE_TIME
-        Vs_PID_WzXY = Kp_IK_WzXY * Vs_WzXY + Kd_IK_WzXY * d_err_WzXY
-        IK_WzXY_prev_error = Vs_WzXY.copy()
-
-        Vs_Z = Vs[5]
-        d_err_Z = (Vs_Z - IK_Z_prev_error) / SAMPLE_TIME
-        Vs_PID_Z = Kp_IK_Z * Vs_Z + Kd_IK_Z * d_err_Z
-        IK_Z_prev_error = Vs_Z
-
-        Vs_PID = np.zeros(6, dtype=np.float64)
-        Vs_PID[0:2] = Vs[0:2]
-        Vs_PID[2:5] = Vs_PID_WzXY
-        Vs_PID[5] = Vs_PID_Z
-
-        # IK velocity
-        Js = kine.jacobian_Space(S, thetaRun_Actual)
-        JsInv = helper.dls_inverse(Js, 1e-3)
-        thetaDotRun_IK = JsInv @ Vs_PID
-        thetaDotRun_IK = np.clip(thetaDotRun_IK, -wLim, wLim)
-        thetaRun_IK = thetaRun_IK + thetaDotRun_IK * SAMPLE_TIME
-
-        # Fuzzy PID torque
-        error_theta = thetaRun_IK - thetaRun_Actual
-        # Match mainFPID: use IK vel minus actual vel for "de"
-        errorDot_theta = thetaDotRun_IK - thetaDotRun_Actual
-
-        dKp_1_norm = interp2d_scalar(error_theta[0], errorDot_theta[0], e_vec, de_vec, Y_kp)
-        dKd_1_norm = interp2d_scalar(error_theta[0], errorDot_theta[0], e_vec, de_vec, Y_kd)
-        dKp_2_norm = interp2d_scalar(error_theta[1], errorDot_theta[1], e_vec, de_vec, Y_kp)
-        dKd_2_norm = interp2d_scalar(error_theta[1], errorDot_theta[1], e_vec, de_vec, Y_kd)
-
-        # Multiplicative gains (same as mainFPID)
-        Kp_1 = Kp_base_1 * dKp_1_norm
-        Kd_1 = Kd_base_1 * dKd_1_norm
-        Kp_2 = Kp_base_2 * dKp_2_norm
-        Kd_2 = Kd_base_2 * dKd_2_norm
-
-        d_err_torque = (error_theta - Torque_prev_error) / SAMPLE_TIME
-        u1 = Kp_1 * error_theta[0] + Kd_1 * d_err_torque[0]
-        u2 = Kp_2 * error_theta[1] + Kd_2 * d_err_torque[1]
-        u3 = Kp_3 * error_theta[2] + Kd_3 * d_err_torque[2]
-        Torque_I[3] += error_theta[3] * SAMPLE_TIME
-        u4 = Kp_4 * error_theta[3] + Ki_4 * Torque_I[3] + Kd_4 * d_err_torque[3]
-
-        torqueEffort = np.clip(np.array([u1, u2, u3, u4]), -tauLim, tauLim)
-        Torque_prev_error = error_theta.copy()
-
-        # Forward dynamics
-        thetaDotDotRun = dyna.forward_Dynamics(S, MList, GList, thetaRun_Actual, thetaDotRun_Actual, torqueEffort, g, Ftip)
-        if not np.all(np.isfinite(thetaDotDotRun)):
-            break
-        thetaDotRun_Actual = thetaDotRun_Actual + thetaDotDotRun * SAMPLE_TIME
-        thetaRun_Actual = thetaRun_Actual + thetaDotRun_Actual * SAMPLE_TIME
-
-        # Pose after integration
-        Tsb_new = kine.PoE_transform(S, M, thetaRun_Actual)
-        pos_out = Tsb_new[:3, 3].copy()
-        err_xyz = pos_traj - pos_out
-
-        if i % log_stride == 0:
-            t_log.append(t)
-            pos_ref_log.append(pos_traj)
-            pos_out_log.append(pos_out)
-            err_log.append(err_xyz)
-
+    err = pos_in - pos_out
     return {
-        "t": np.array(t_log),
-        "pos_ref": np.array(pos_ref_log),
-        "pos_out": np.array(pos_out_log),
-        "err": np.array(err_log),
+        "t": t_vec,
+        "pos_ref": pos_in,
+        "pos_out": pos_out,
+        "err": err,
     }
 
-def compute_mae_mse(err: np.ndarray):
+
+def compute_metrics(err: np.ndarray):
     mae = np.mean(np.abs(err), axis=0)
     mse = np.mean(err ** 2, axis=0)
     mae_all = np.mean(np.linalg.norm(err, axis=1))
     mse_all = np.mean(np.sum(err * err, axis=1))
     return {"mae": mae, "mse": mse, "mae_all": mae_all, "mse_all": mse_all}
 
+
 def print_metrics(name, err):
-    m = compute_mae_mse(err)
+    m = compute_metrics(err)
     axes = ["x", "y", "z"]
     print(f"\nMetrics for {name}:")
     for i, ax in enumerate(axes):
@@ -184,25 +103,37 @@ def print_metrics(name, err):
     print(f"  overall: MAE={m['mae_all']:.6f}, MSE={m['mse_all']:.6f}")
     return m
 
+
 def compare_metrics(base, other, label_other):
     def pct_improve(a, b):
         return 0.0 if a <= 0 else (a - b) / a * 100.0
+
     print(f"\nImprovement vs DEFAULT for {label_other}:")
     axes = ["x", "y", "z"]
     for i, ax in enumerate(axes):
-        print(f"  {ax}: MAE {pct_improve(base['mae'][i], other['mae'][i]):+.2f}%, "
-              f"MSE {pct_improve(base['mse'][i], other['mse'][i]):+.2f}%")
-    print(f"  overall: MAE {pct_improve(base['mae_all'], other['mae_all']):+.2f}%, "
-          f"MSE {pct_improve(base['mse_all'], other['mse_all']):+.2f}%")
+        print(
+            f"  {ax}: MAE {pct_improve(base['mae'][i], other['mae'][i]):+.2f}%, "
+            f"MSE {pct_improve(base['mse'][i], other['mse'][i]):+.2f}%"
+        )
+    print(
+        f"  overall: MAE {pct_improve(base['mae_all'], other['mae_all']):+.2f}%, "
+        f"MSE {pct_improve(base['mse_all'], other['mse_all']):+.2f}%"
+    )
 
-def plot_tracking_and_error(log_def, log_opt, save_dir=save_dir):
+
+def plot_tracking(log_def, log_opt=None, save_dir=SAVE_DIR):
     os.makedirs(save_dir, exist_ok=True)
-    t = log_def["t"]; ref = log_def["pos_ref"]; out_d = log_def["pos_out"]; err_d = log_def["err"]
+    t = log_def["t"]
+    ref = log_def["pos_ref"]
+    out_d = log_def["pos_out"]
+    err_d = log_def["err"]
+    labels = ["X", "Y", "Z"]
+
     has_opt = log_opt is not None
     if has_opt:
-        t_o = log_opt["t"]; out_o = log_opt["pos_out"]; err_o = log_opt["err"]
-
-    labels = ["X", "Y", "Z"]
+        t_o = log_opt["t"]
+        out_o = log_opt["pos_out"]
+        err_o = log_opt["err"]
 
     # Tracking
     fig1, axs1 = plt.subplots(3, 1, figsize=(10, 9), sharex=True)
@@ -233,10 +164,9 @@ def plot_tracking_and_error(log_def, log_opt, save_dir=save_dir):
     fig2.tight_layout()
     fig2.savefig(os.path.join(save_dir, "COMPARE_errors_default_vs_optimized.png"), dpi=150)
 
-    # Error difference (default - optimized)
+    # Error difference
     if has_opt:
         fig3, axs3 = plt.subplots(3, 1, figsize=(10, 9), sharex=True)
-        # Align lengths
         n = min(len(err_d), len(err_o))
         td = t[:n]
         diff = err_d[:n] - err_o[:n]
@@ -254,51 +184,61 @@ def plot_tracking_and_error(log_def, log_opt, save_dir=save_dir):
     plt.close(fig1)
     plt.close(fig2)
 
+
+def load_optimized_tables():
+    if not os.path.exists(RESULTS_NPZ):
+        return None, None, None
+    data = np.load(RESULTS_NPZ, allow_pickle=True)
+    dkp = data["Best_dKp"].tolist() if "Best_dKp" in data else None
+    dkd = data["Best_dKd"].tolist() if "Best_dKd" in data else None
+    cost = float(data["Best_Cost"]) if "Best_Cost" in data else None
+    return dkp, dkd, cost
+
+
 def main():
-    # Setup simulation config
     sim_config = setup_simulation_config()
 
-    # Default rules and params from mainFPID
+    # Default tables
     default_dkp, default_dkd = get_default_rules()
     print_rule_table(default_dkp, "DEFAULT dKp")
     print_rule_table(default_dkd, "DEFAULT dKd")
     default_params = encode_rules_to_params(default_dkp, default_dkd)
 
-    # Load optimized rules from mainFPID results
-    optimized_dkp = None
-    optimized_dkd = None
-    optimized_cost = None
-    if os.path.exists(RESULTS_NPZ):
-        data = np.load(RESULTS_NPZ, allow_pickle=True)
-        if "Best_dKp" in data and "Best_dKd" in data:
-            optimized_dkp = data["Best_dKp"].tolist()
-            optimized_dkd = data["Best_dKd"].tolist()
-            print_rule_table(optimized_dkp, "OPTIMIZED dKp")
-            print_rule_table(optimized_dkd, "OPTIMIZED dKd")
-        if "Best_Cost" in data:
-            optimized_cost = float(data["Best_Cost"])
-    if optimized_dkp is None or optimized_dkd is None:
-        print("\nOptimized tables not available; running DEFAULT only.")
-        log_default = simulate_and_log(default_params, sim_config, log_stride=5)
-        metrics_def = print_metrics("DEFAULT", log_default["err"])
-        print("\nDone.")
-        return
+    # Load optimized
+    opt_dkp, opt_dkd, opt_cost = load_optimized_tables()
+    if opt_dkp and opt_dkd:
+        print_rule_table(opt_dkp, "OPTIMIZED dKp")
+        print_rule_table(opt_dkd, "OPTIMIZED dKd")
+    else:
+        print("\nOptimized tables not found; will run DEFAULT only.")
 
-    print("\nCollecting trajectories for DEFAULT and OPTIMIZED (with logging)...")
-    log_default = simulate_and_log(default_params, sim_config, log_stride=5)
-    optimized_params = encode_rules_to_params(optimized_dkp, optimized_dkd)
-    log_opt = simulate_and_log(optimized_params, sim_config, log_stride=5)
+    # Run sims
+    print("\nRunning DEFAULT...")
+    log_def = run_with_logging(default_params, sim_config)
 
-    metrics_def = print_metrics("DEFAULT", log_default["err"])
-    metrics_opt = print_metrics("OPTIMIZED", log_opt["err"])
-    compare_metrics(metrics_def, metrics_opt, "OPTIMIZED")
+    if opt_dkp and opt_dkd:
+        print("Running OPTIMIZED...")
+        log_opt = run_with_logging(encode_rules_to_params(opt_dkp, opt_dkd), sim_config)
+    else:
+        log_opt = None
 
-    plot_tracking_and_error(log_default, log_opt, save_dir=save_dir)
-    print(f"\nPlots saved to {save_dir}:")
+    # Metrics
+    metrics_def = print_metrics("DEFAULT", log_def["err"])
+    if log_opt:
+        metrics_opt = print_metrics("OPTIMIZED", log_opt["err"])
+        compare_metrics(metrics_def, metrics_opt, "OPTIMIZED")
+
+    # Plots
+    plot_tracking_and_error = plot_tracking  # alias
+    plot_tracking_and_error(log_def, log_opt, save_dir=SAVE_DIR)
+
+    print(f"\nPlots saved to {SAVE_DIR}:")
     print("  COMPARE_tracking_ref_vs_out.png")
     print("  COMPARE_errors_default_vs_optimized.png")
-    print("  COMPARE_error_diff_default_minus_optimized.png")
+    if log_opt:
+        print("  COMPARE_error_diff_default_minus_optimized.png")
     print("\nDone.")
+
 
 if __name__ == "__main__":
     main()

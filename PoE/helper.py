@@ -403,3 +403,12 @@ class DualLogger:
     def __del__(self):
         """Ensure file is closed when object is destroyed."""
         self.close()
+
+@njit(inline='always')
+def clip_scalar(x, lo, hi):
+    if x < lo:
+        return lo
+    elif x > hi:
+        return hi
+    else:
+        return x
