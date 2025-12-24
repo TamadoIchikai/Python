@@ -186,7 +186,7 @@ for i, axis in enumerate(labels):
     plt.tight_layout()
 
     # Save figure
-    filename = f"IK_{axis}_tracking.png"
+    filename = f"Word_Related/Section_3_2_InverseKinematics/IK_{axis}_tracking.png"
     plt.savefig(filename, dpi=600, bbox_inches="tight")
     plt.show()
 
