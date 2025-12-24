@@ -489,7 +489,7 @@ def setup_simulation_config():
         'de_range': (-1.0, 1.0),
 
         # Cost weights
-        'w_ISE': 0.3, 'w_ITAE': 0.7, 'w_IAE': 0.8, 'w_U': 1e-4,
+        'w_ISE': 0.6, 'w_ITAE': 0.6, 'w_IAE': 0.8, 'w_U': 1e-4,
         'used_Noise': NOISE["used"], 'NOISE_Gen_thetaRun_Actual': NOISE_Gen_thetaRun_Actual, 'NOISE_Gen_thetaRunDot_Actual':NOISE_Gen_thetaRunDot_Actual
     }
 
@@ -585,8 +585,8 @@ if __name__ == "__main__":
     default_cost, eval_time = test_evaluation(default_params, sim_config, "Default Rules")
     
     # GBO parameters
-    nP = 16
-    MaxIt = 250
+    nP = 20
+    MaxIt = 10000
     dim = 98
     lb = np.ones(dim, dtype=np.float64)
     ub = np.ones(dim, dtype=np.float64) * 7
@@ -602,7 +602,7 @@ if __name__ == "__main__":
     print(f"Est. time per iteration: {eval_time * nP * 2:.1f}s")
     print(f"Est. total time: {eval_time * nP * 2 * MaxIt / 60:.1f} minutes")
     print(f"Cost weights: ISE={sim_config['w_ISE']}, ITAE={sim_config['w_ITAE']}, "
-          f"IAE={sim_config['w_IAE']}")
+          f"IAE={sim_config['w_IAE']}, torque_U={sim_config['w_U']}")
     print("=" * 70)
     
     # Run GBO
@@ -686,3 +686,9 @@ if __name__ == "__main__":
         sys.stdout.close()
     except:
         pass
+
+# Improvement vs DEFAULT for OPTIMIZED:
+#   x: MAE +10.96%, MSE +15.03%
+#   y: MAE +12.83%, MSE +12.14%
+#   z: MAE +0.00%, MSE +0.00%
+#   overall: MAE +7.70%, MSE +13.67%

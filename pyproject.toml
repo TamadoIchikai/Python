@@ -8,5 +8,6 @@ dependencies = [
     "matplotlib>=3.10.7",
     "numba>=0.63.1",
     "numpy>=2.3.5",
+    "pyqt6>=6.10.1",
     "scipy>=1.16.3",
 ]

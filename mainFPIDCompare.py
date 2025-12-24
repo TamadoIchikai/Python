@@ -28,7 +28,7 @@ def run_with_logging(rule_params: np.ndarray, sim_config: dict):
     de_vec = np.linspace(de_range[0], de_range[1], nDE)
     Y_kp, Y_kd = controller.eval_grid(e_vec, de_vec, mfs_e, mfs_de, kp_const, kd_const)
 
-    pos_in, pos_out, _, t_vec = simulation_loop_fuzzy(
+    pos_in, pos_out, torque_out, t_vec = simulation_loop_fuzzy(
         # Robot configuration
         S=sim_config["S"],
         M=sim_config["M"],
@@ -82,6 +82,7 @@ def run_with_logging(rule_params: np.ndarray, sim_config: dict):
         "t": t_vec,
         "pos_ref": pos_in,
         "pos_out": pos_out,
+        "torque_out": torque_out,
         "err": err,
     }
 
@@ -127,6 +128,7 @@ def plot_tracking(log_def, log_opt=None, save_dir=SAVE_DIR):
     ref = log_def["pos_ref"]
     out_d = log_def["pos_out"]
     err_d = log_def["err"]
+    tau_d = log_def["torque_out"]
     labels = ["X", "Y", "Z"]
 
     has_opt = log_opt is not None
@@ -135,34 +137,45 @@ def plot_tracking(log_def, log_opt=None, save_dir=SAVE_DIR):
         out_o = log_opt["pos_out"]
         err_o = log_opt["err"]
 
-    # Tracking
-    fig1, axs1 = plt.subplots(3, 1, figsize=(10, 9), sharex=True)
-    for i, ax in enumerate(axs1):
-        ax.plot(t, ref[:, i], "k--", label="ref")
-        ax.plot(t, out_d[:, i], "r-", label="default")
-        if has_opt:
-            ax.plot(t_o, out_o[:, i], "b-", label="optimized")
-        ax.set_ylabel(f"{labels[i]} (m)")
-        ax.grid(True)
-        if i == 0:
-            ax.legend()
-    axs1[-1].set_xlabel("Time (s)")
-    fig1.tight_layout()
-    fig1.savefig(os.path.join(save_dir, "COMPARE_tracking_ref_vs_out.png"), dpi=150)
+        # ============================================
+    # Tracking (left) + Error (right), side by side
+    # ============================================
+    fig12, axs = plt.subplots(
+        3, 2, figsize=(14, 9), sharex="col"
+    )
 
-    # Errors
-    fig2, axs2 = plt.subplots(3, 1, figsize=(10, 9), sharex=True)
-    for i, ax in enumerate(axs2):
-        ax.plot(t, err_d[:, i], "r-", label="default err")
+    for i in range(3):
+        # ---- Tracking (LEFT column) ----
+        ax_tr = axs[i, 0]
+        ax_tr.plot(t, ref[:, i], "k--", label="ref")
+        ax_tr.plot(t, out_d[:, i], "r-", label="default")
         if has_opt:
-            ax.plot(t_o, err_o[:, i], "b-", label="optimized err")
-        ax.set_ylabel(f"{labels[i]} error (m)")
-        ax.grid(True)
+            ax_tr.plot(t_o, out_o[:, i], "b-", label="optimized")
+        ax_tr.set_ylabel(f"{labels[i]} (m)")
+        ax_tr.set_title("Tracking" if i == 0 else "")
+        ax_tr.grid(True)
         if i == 0:
-            ax.legend()
-    axs2[-1].set_xlabel("Time (s)")
-    fig2.tight_layout()
-    fig2.savefig(os.path.join(save_dir, "COMPARE_errors_default_vs_optimized.png"), dpi=150)
+            ax_tr.legend()
+
+        # ---- Error (RIGHT column) ----
+        ax_er = axs[i, 1]
+        ax_er.plot(t, err_d[:, i], "r-", label="default err")
+        if has_opt:
+            ax_er.plot(t_o, err_o[:, i], "b-", label="optimized err")
+        ax_er.set_ylabel(f"{labels[i]} error (m)")
+        ax_er.set_title("Error" if i == 0 else "")
+        ax_er.grid(True)
+        if i == 0:
+            ax_er.legend()
+
+    axs[-1, 0].set_xlabel("Time (s)")
+    axs[-1, 1].set_xlabel("Time (s)")
+
+    fig12.tight_layout()
+    fig12.savefig(
+        os.path.join(save_dir, "COMPARE_tracking_and_error_side_by_side.png"),
+        dpi=150,
+    )
 
     # Error difference
     if has_opt:
@@ -181,8 +194,30 @@ def plot_tracking(log_def, log_opt=None, save_dir=SAVE_DIR):
         fig3.savefig(os.path.join(save_dir, "COMPARE_error_diff_default_minus_optimized.png"), dpi=150)
         plt.close(fig3)
 
-    plt.close(fig1)
-    plt.close(fig2)
+    has_opt_tau = has_opt and ("torque_out" in log_opt)
+    if has_opt_tau:
+        tau_o = log_opt["torque_out"]
+
+    joint_labels = ["J1", "J2", "J3", "J4"]
+
+    fig4, axs4 = plt.subplots(4, 1, figsize=(10, 10), sharex=True)
+    for j, ax in enumerate(axs4):
+        ax.plot(t, tau_d[:, j], "r-", label="default")
+        if has_opt_tau:
+            ax.plot(t_o, tau_o[:, j], "b-", label="optimized")
+        ax.set_ylabel(f"τ{joint_labels[j]} (Nm)")
+        ax.grid(True)
+        if j == 0:
+            ax.legend()
+
+    axs4[-1].set_xlabel("Time (s)")
+    fig4.tight_layout()
+    fig4.savefig(
+        os.path.join(save_dir, "COMPARE_torque_default_vs_optimized.png"),
+        dpi=150,
+    )
+    plt.close(fig4)
+    plt.close(fig12)
 
 
 def load_optimized_tables():
