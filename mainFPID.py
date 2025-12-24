@@ -364,9 +364,9 @@ def setup_simulation_config():
     """Setup robot and simulation configuration."""
     # Robot dimensions (meters)
     l1, l2 = 0.35, 0.45
-    d1, d2, d3 = 0.284, 0.1, 0.334
+    d1, d2, d3 = 0.284, 0.015, 0.334
     a1, b1, a2, b2 = 0.035, 0.095, 0.02, 0.08
-    r3, c1, c2 = 0.033, 0.05, 0.08
+    r3, c1, c2 = 0.033, 0.05, 0.02
 
     theta_Pose = np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float64)
 

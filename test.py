@@ -1,166 +1,221 @@
-import sys
+#%% 
 import numpy as np
+import matplotlib.pyplot as plt
+# ===== PoE modules (same as your project) =====
+import PoE.lieTheory as lie
+import PoE.kinematics as kine
+import PoE.helper as helper
+import PoE.trajectoryGen as trajGen
 
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget,
-    QVBoxLayout, QGridLayout,
-    QSlider, QLabel
-)
-from PyQt6.QtCore import Qt
+plt.rcParams.update({
+    "font.family": "Times New Roman",
+    "font.size": 12,
+    "axes.titlesize": 14,
+    "axes.labelsize": 12,
+    "legend.fontsize": 11,
+    "xtick.labelsize": 11,
+    "ytick.labelsize": 11,
+})
 
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-from matplotlib.figure import Figure
+# ============================================================
+# SIMULATION PARAMETERS
+# ============================================================
+SAMPLE_TIME = 0.001
+STOP_TIME   = 10.0
+n_steps     = int(STOP_TIME / SAMPLE_TIME)
 
-# -----------------------------
-# Simulation parameters
-# -----------------------------
-dt = 0.001
-T  = 5.0
-t  = np.arange(0, T, dt)
+# ============================================================
+# ROBOT SETUP (copied structurally from your config)
+# ============================================================
+l1, l2 = 0.35, 0.45
+d1, d2 = 0.284, 0.015
 
-# Step input 0 -> 1
-r = np.ones_like(t)
+theta_init = np.zeros(4)
 
-# Plant parameters (fixed)
-wn   = 2.0    # natural frequency
-zeta = 0.15   # low damping → overshoot
+q = np.array([
+    [0, l1, l1 + l2, l1 + l2],
+    [0, 0, 0, 0],
+    [0, d1, d1 + d2, d1 + d2]
+], dtype=np.float64)
 
-# -----------------------------
-# PID + second-order plant
-# -----------------------------
-def simulate_pid(Kp, Ki, Kd):
-    y = np.zeros_like(t)
-    y_dot = 0.0
+w = np.array([
+    [0, 0, 0, 0],
+    [0, 0, 0, 0],
+    [1, 1, 1, 0]
+], dtype=np.float64)
 
-    ei = 0.0
-    e_prev = 0.0
+M = np.array([
+    [1, 0, 0, l1 + l2],
+    [0, 1, 0, 0],
+    [0, 0, 1, d1 + d2],
+    [0, 0, 0, 1]
+], dtype=np.float64)
 
-    for k in range(len(t) - 1):
-        e = r[k] - y[k]
-        ei += e * dt
-        ed = (e - e_prev) / dt
+S = lie.compute_ScrewMat(w, q, 3, -3)
+# Desired pose
 
-        u = Kp * e + Ki * ei + Kd * ed
+theta_d = np.array([np.deg2rad(45.0), np.deg2rad(90.0), np.deg2rad(30.0), 0.3])
+T_d = kine.PoE_transform(S, M, theta_d)
+#%% 
+# ============================================================
+# TRAJECTORY SETUP
+# ============================================================
+startTime   = 3.0
+stepTimeXY = 2.0
+stepTimeZ  = 3.0
 
-        # second-order dynamics
-        y_ddot = u - 2*zeta*wn*y_dot - wn**2*y[k]
+randomPairs = trajGen.random_Index_Pair(n=1000, seed=10)
 
-        y_dot += y_ddot * dt
-        y[k+1] = y[k] + y_dot * dt
+# ============================================================
+# LOGS
+# ============================================================
+theta_log     = np.zeros((n_steps, 4))
+pos_input_log = np.zeros((n_steps, 3))
+pos_out_log   = np.zeros((n_steps, 3))
+t_log         = np.zeros(n_steps)
 
-        e_prev = e
+# ============================================================
+# IK LOOP
+# ============================================================
+theta = theta_init.copy()
 
-    return y
+for i in range(n_steps):
+    t = i * SAMPLE_TIME
 
-# -----------------------------
-# Matplotlib canvas
-# -----------------------------
-class MplCanvas(FigureCanvasQTAgg):
-    def __init__(self):
-        fig = Figure(figsize=(9, 7))
-        self.ax_y    = fig.add_subplot(2, 2, 1)
-        self.ax_iae  = fig.add_subplot(2, 2, 2)
-        self.ax_ise  = fig.add_subplot(2, 2, 3)
-        self.ax_itae = fig.add_subplot(2, 2, 4)
-        super().__init__(fig)
+    # Desired trajectory
+    if t < startTime:
+        R_traj = M[:3, :3]
+        p_traj = M[:3, 3]
+    else:
+        R_traj = T_d[:3, :3]
+        p_traj = T_d[:3, 3]
 
-# -----------------------------
-# Main Window
-# -----------------------------
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("PID Step Response (0 → 1)")
+    T_traj = helper.RpTo_TransMat(R_traj, p_traj)
 
-        self.canvas = MplCanvas()
+    # Current FK
+    Tsb = kine.PoE_transform(S, M, theta)
 
-        slider_cfg = {
-            "Kp": (0, 3000, 500),
-            "Ki": (0, 500, 50),
-            "Kd": (0, 300, 20),
-        }
+    # Twist error (SE(3))
+    Vs = kine.twist_Error(Tsb, T_traj)
 
-        self.sliders = {}
-        self.labels  = {}
+    # Jacobian (space)
+    Js = kine.jacobian_Space(S, theta)
 
-        slider_layout = QGridLayout()
+    # Damped least squares inverse
+    JsInv = helper.dls_inverse(Js, 1e-3)
 
-        for i, (name, (mn, mx, init)) in enumerate(slider_cfg.items()):
-            slider = QSlider(Qt.Orientation.Horizontal)
-            slider.setMinimum(mn)
-            slider.setMaximum(mx)
-            slider.setValue(init)
-            slider.valueChanged.connect(self.update_plots)
+    # Velocity IK
+    theta_dot = JsInv @ Vs
 
-            label = QLabel()
-            slider_layout.addWidget(QLabel(name), i, 0)
-            slider_layout.addWidget(slider, i, 1)
-            slider_layout.addWidget(label, i, 2)
+    # Integrate joint angles
+    theta = helper.discrete_Integrator(theta, theta_dot, SAMPLE_TIME)
 
-            self.sliders[name] = slider
-            self.labels[name]  = label
+    # Logging
+    theta_log[i]     = theta
+    pos_input_log[i] = p_traj
+    pos_out_log[i]   = Tsb[:3, 3]
+    t_log[i]         = t
 
-        layout = QVBoxLayout()
-        layout.addLayout(slider_layout)
-        layout.addWidget(self.canvas)
+# ============================================================
+# PRINT RESULTS
+# ============================================================
+print("=" * 60)
+print("INVERSE KINEMATICS ONLY – RESULT")
+print("=" * 60)
 
-        container = QWidget()
-        container.setLayout(layout)
-        self.setCentralWidget(container)
+print("\nFinal joint configuration:")
+print(theta)
 
-        self.update_plots()
+print("\nFinal desired position:")
+print(pos_input_log[-1])
 
-    def update_plots(self):
-        Kp = self.sliders["Kp"].value()
-        Ki = self.sliders["Ki"].value()
-        Kd = self.sliders["Kd"].value()
+print("\nFinal end-effector position:")
+print(pos_out_log[-1])
 
-        self.labels["Kp"].setText(str(Kp))
-        self.labels["Ki"].setText(str(Ki))
-        self.labels["Kd"].setText(str(Kd))
+print("\nFinal position error:")
+print(pos_input_log[-1] - pos_out_log[-1])
 
-        y = simulate_pid(Kp, Ki, Kd)
-        e = r - y
+fig1, axs1 = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
 
-        iae  = np.cumsum(np.abs(e)) * dt
-        ise  = np.cumsum(e**2) * dt
-        itae = np.cumsum(t * np.abs(e)) * dt
+labels = ["X", "Y", "Z"]
 
-        for ax in (
-            self.canvas.ax_y,
-            self.canvas.ax_iae,
-            self.canvas.ax_ise,
-            self.canvas.ax_itae
-        ):
-            ax.clear()
+for i in range(3):
+    axs1[i].plot(t_log, pos_input_log[:, i], "k--", label="Reference")
+    axs1[i].plot(t_log, pos_out_log[:, i], label="Output")
+    axs1[i].set_ylabel(f"{labels[i]} [m]")
+    axs1[i].grid(True)
+    axs1[i].legend()
 
-        # Output
-        self.canvas.ax_y.plot(t, y, label="y(t)")
-        self.canvas.ax_y.plot(t, r, "k--", label="r(t)")
-        self.canvas.ax_y.set_title("Step Response")
-        self.canvas.ax_y.legend()
-        self.canvas.ax_y.grid(True)
+axs1[-1].set_xlabel("Time [s]")
+fig1.suptitle("End-Effector Position: Reference vs Output")
+plt.tight_layout()
+plt.show()
 
-        self.canvas.ax_iae.plot(t, iae)
-        self.canvas.ax_iae.set_title("IAE(t)")
-        self.canvas.ax_iae.grid(True)
+# ============================================================
+# POST-PROCESSING: SEPARATE AXIS PLOTS (NO ERROR)
+# ============================================================
+labels = ["X", "Y", "Z"]
 
-        self.canvas.ax_ise.plot(t, ise)
-        self.canvas.ax_ise.set_title("ISE(t)")
-        self.canvas.ax_ise.grid(True)
+for i, axis in enumerate(labels):
 
-        self.canvas.ax_itae.plot(t, itae)
-        self.canvas.ax_itae.set_title("ITAE(t)")
-        self.canvas.ax_itae.grid(True)
+    fig, ax = plt.subplots(
+        figsize=(8, 4)
+    )
 
-        self.canvas.draw()
+    # Reference vs Output
+    ax.plot(
+        t_log,
+        pos_input_log[:, i],
+        "k--",
+        linewidth=2,
+        label="Reference"
+    )
+    ax.plot(
+        t_log,
+        pos_out_log[:, i],
+        linewidth=2,
+        label="Output"
+    )
 
-# -----------------------------
-# Run
-# -----------------------------
-app = QApplication(sys.argv)
-window = MainWindow()
-window.resize(1100, 800)
-window.show()
-sys.exit(app.exec())
+    ax.set_title(f"End-Effector {axis}-Axis Tracking")
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel(f"{axis} position [m]")
+    ax.grid(True)
+    ax.legend(loc="best")
 
+    plt.tight_layout()
+
+    # Save figure
+    filename = f"IK_{axis}_tracking.png"
+    plt.savefig(filename, dpi=600, bbox_inches="tight")
+    plt.show()
+
+# #%% 
+# import numpy as np
+# import PoE.lieTheory as lie
+
+# def print_individual_exponentials(S, theta):
+#     """
+#     Compute and print exp([xi_i] * theta_i) for each joint.
+    
+#     S: 6xn screw axis matrix (space frame)
+#     theta: nx1 joint variable vector
+#     """
+#     n = S.shape[1]
+
+#     print("=" * 70)
+#     print("INDIVIDUAL EXPONENTIAL MAPS exp([xi_i] * theta_i)")
+#     print("=" * 70)
+
+#     for i in range(n):
+#         xi_theta = S[:, i] * theta[i]          # 6x1
+#         se3_i = lie.twistTo_se3(xi_theta)      # 4x4 se(3)
+#         T_i = lie.exp_se3(se3_i)               # 4x4 SE(3)
+
+
+#         # print("\nse(3) matrix:")
+#         # print(se3_i)
+
+#         print("\nexp(se(3)) = T_{i}:")
+#         print(T_i)
+# # %%
