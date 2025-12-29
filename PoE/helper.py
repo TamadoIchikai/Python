@@ -1,7 +1,8 @@
 import numpy as np
 from numba import njit, prange
 import matplotlib.pyplot as plt
-import sys, os
+import sys, os, time
+import PoE.optimizer as optimizer
 
 tol = 1e-5
 
@@ -229,7 +230,7 @@ def validate_Dynamics_Inputs(Ftip, g, MList, GList, theta_Pose):
     return Ftip, g, MList, GList, theta_Pose
 
 def plot_Continuous(posInput_log, posOutput_log, tVec, extras=None,
-                    figsize=(14, 8), max_cols=3, save_path=None):
+                    figsize=(14, 9), max_cols=3, save_path=None):
     posInput_log = np.asarray(posInput_log)
     posOutput_log = np.asarray(posOutput_log)
     tVec = np.asarray(tVec)
@@ -277,50 +278,67 @@ def plot_Continuous(posInput_log, posOutput_log, tVec, extras=None,
                 label = f"{name} (c{c})"
                 extra_series.append((label, reshaped[:, c]))
 
-    base_rows = 2
+    base_rows = 3
     base_cols = 3
     n_extra = len(extra_series)
     if n_extra == 0:
         total_rows = base_rows
         total_cols = base_cols
+        height_ratios = [1.0, 1.0, 1.8]  # make XY row taller
     else:
         extra_rows = int(np.ceil(n_extra / float(max_cols)))
         total_rows = int(base_rows + extra_rows)
         total_cols = int(max(base_cols, max_cols))
+        height_ratios = [1.0, 1.0, 1.8] + [1.0] * extra_rows
 
     fig = plt.figure(figsize=figsize)
-    gs = fig.add_gridspec(total_rows, total_cols, hspace=1.0, wspace=0.35)
+    gs = fig.add_gridspec(total_rows, total_cols, hspace=0.9, wspace=0.35,
+                          height_ratios=height_ratios)
 
-    ax1 = fig.add_subplot(gs[0, 0])
-    ax1.plot(t, xin, label="xin")
-    ax1.plot(t, xout, label="xout")
+    ax1 = fig.add_subplot(gs[0, 0]); ax1.plot(t, xin, label="xin"); ax1.plot(t, xout, label="xout")
     ax1.set_title("X input vs X output"); ax1.set_xlabel("Time (s)"); ax1.set_ylabel("X (m)")
     ax1.grid(True); ax1.legend()
 
-    ax2 = fig.add_subplot(gs[0, 1])
-    ax2.plot(t, yin, label="yin"); ax2.plot(t, yout, label="yout")
+    ax2 = fig.add_subplot(gs[0, 1]); ax2.plot(t, yin, label="yin"); ax2.plot(t, yout, label="yout")
     ax2.set_title("Y input vs Y output"); ax2.set_xlabel("Time (s)"); ax2.set_ylabel("Y (m)")
     ax2.grid(True); ax2.legend()
 
-    ax3 = fig.add_subplot(gs[0, 2])
-    ax3.plot(t, zin, label="zin"); ax3.plot(t, zout, label="zout")
+    ax3 = fig.add_subplot(gs[0, 2]); ax3.plot(t, zin, label="zin"); ax3.plot(t, zout, label="zout")
     ax3.set_title("Z input vs Z output"); ax3.set_xlabel("Time (s)"); ax3.set_ylabel("Z (m)")
     ax3.grid(True); ax3.legend()
 
-    ax4 = fig.add_subplot(gs[1, 0])
-    ax4.plot(t, ex, label="x error")
+    ax4 = fig.add_subplot(gs[1, 0]); ax4.plot(t, ex, label="x error")
     ax4.set_title("X-axis Error"); ax4.set_xlabel("Time (s)"); ax4.set_ylabel("Error (m)")
     ax4.grid(True); ax4.legend()
 
-    ax5 = fig.add_subplot(gs[1, 1])
-    ax5.plot(t, ey, label="y error")
+    ax5 = fig.add_subplot(gs[1, 1]); ax5.plot(t, ey, label="y error")
     ax5.set_title("Y-axis Error"); ax5.set_xlabel("Time (s)"); ax5.set_ylabel("Error (m)")
     ax5.grid(True); ax5.legend()
 
-    ax6 = fig.add_subplot(gs[1, 2])
-    ax6.plot(t, ez, label="z error")
+    ax6 = fig.add_subplot(gs[1, 2]); ax6.plot(t, ez, label="z error")
     ax6.set_title("Z-axis Error"); ax6.set_xlabel("Time (s)"); ax6.set_ylabel("Error (m)")
     ax6.grid(True); ax6.legend()
+
+    # 2D XY trajectory view (desired vs actual) - span full width
+    ax7 = fig.add_subplot(gs[2, 0:total_cols])
+    ax7.plot(xin, yin, label="XY desired", color="C0", linewidth=2.0)
+    ax7.plot(xout, yout, label="XY actual",  color="C1", linewidth=2.0)
+    ax7.set_title("Planar XY trajectory")
+    ax7.set_xlabel("x (m)")
+    ax7.set_ylabel("y (m)")
+    ax7.grid(True)
+    ax7.legend(loc="upper right", ncol=2, frameon=True)
+    ax7.set_aspect("equal", adjustable="box")
+
+    # tight limits with small padding
+    x_min = min(float(np.min(xin)), float(np.min(xout)))
+    x_max = max(float(np.max(xin)), float(np.max(xout)))
+    y_min = min(float(np.min(yin)), float(np.min(yout)))
+    y_max = max(float(np.max(yin)), float(np.max(yout)))
+    xr = x_max - x_min; yr = y_max - y_min
+    pad = 0.06 * max(xr, yr) if max(xr, yr) > 0 else 0.01
+    ax7.set_xlim(x_min - pad, x_max + pad)
+    ax7.set_ylim(y_min - pad, y_max + pad)
 
     if n_extra:
         start_idx = base_rows
@@ -360,24 +378,63 @@ def plot_3d_heatmaps(theta_N, npz_path, downsample=5):
     Zkp_s = Zkp[::s, ::s]
     Zkd_s = Zkd[::s, ::s]
 
-    fig = plt.figure(figsize=(12, 5))
+    # Set matplotlib style
+    plt.rcParams.update({
+        "font.family": "Times New Roman",
+        "font.size": 12,
+        "axes.titlesize": 14,
+        "axes.labelsize": 12,
+    })
 
-    ax1 = fig.add_subplot(1, 2, 1, projection="3d")
-    surf1 = ax1.plot_surface(EE_s, DD_s, Zkp_s, cmap="viridis", edgecolor="none", antialiased=True)
-    ax1.set_title(f"dKp surface (Theta {theta_N})")
-    ax1.set_xlabel(f"e_theta {theta_N}")
-    ax1.set_ylabel(f"de_theta {theta_N}")
-    ax1.set_zlabel("dKp")
-    fig.colorbar(surf1, ax=ax1, shrink=0.6, pad=0.1, label="dKp")
+    # Plot dKp surface
+    fig1 = plt.figure(figsize=(10, 8))
+    ax1 = fig1.add_subplot(111, projection="3d")
+    surf1 = ax1.plot_surface(EE_s, DD_s, Zkp_s, cmap="jet", edgecolor='k', linewidth=0.2, antialiased=True, alpha=0.9)
+    ax1.set_title(r"Surface of $\Delta K_{p}$ Fuzzy rules", fontsize=14, pad=2)
+    ax1.set_xlabel("e", fontsize=12, labelpad=10)
+    ax1.set_ylabel("de", fontsize=12, labelpad=10)
+    ax1.set_zlabel(r"$\Delta K_p$", fontsize=12, labelpad=10)
+    
+    # Set symmetric axis limits
+    ax1.set_xlim([-0.1, 0.1])
+    ax1.set_ylim([-1, 1])
+    
+    # Set custom ticks
+    ax1.set_xticks([-0.1, 0, 0.1])
+    ax1.set_yticks([-1, 0, 1])
+    ax1.set_zticks([-1.0, 0, 1.0])
+    ax1.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.1f}'))
+    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.0f}'))
+    ax1.zaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.1f}'))
+    
+    ax1.view_init(elev=25, azim=55)
+    ax1.zaxis._axinfo['label']['space_factor'] = 2.5
+    plt.tight_layout()
+    plt.show()
 
-    ax2 = fig.add_subplot(1, 2, 2, projection="3d")
-    surf2 = ax2.plot_surface(EE_s, DD_s, Zkd_s, cmap="plasma", edgecolor="none", antialiased=True)
-    ax2.set_title(f"dKd surface (Theta {theta_N})")
-    ax2.set_xlabel(f"e_theta {theta_N}")
-    ax2.set_ylabel(f"de_theta {theta_N}")
-    ax2.set_zlabel("dKd")
-    fig.colorbar(surf2, ax=ax2, shrink=0.6, pad=0.1, label="dKd")
-
+    # Plot dKd surface
+    fig2 = plt.figure(figsize=(10, 8))
+    ax2 = fig2.add_subplot(111, projection="3d")
+    surf2 = ax2.plot_surface(EE_s, DD_s, Zkd_s, cmap="jet", edgecolor='k', linewidth=0.2, antialiased=True, alpha=0.9)
+    ax2.set_title(r"Surface of $\Delta K_{d}$ Fuzzy rules", fontsize=14, pad=2)
+    ax2.set_xlabel("e", fontsize=12, labelpad=10)
+    ax2.set_ylabel("de", fontsize=12, labelpad=10)
+    ax2.set_zlabel(r"$\Delta K_d$", fontsize=12, labelpad=10)
+    
+    # Set symmetric axis limits
+    ax2.set_xlim([-0.1, 0.1])
+    ax2.set_ylim([-1, 1])
+    
+    # Set custom ticks
+    ax2.set_xticks([-0.1, 0, 0.1])
+    ax2.set_yticks([-1, 0, 1])
+    ax2.set_zticks([-1.0, 0, 1.0])
+    ax2.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.1f}'))
+    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.0f}'))
+    ax2.zaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.1f}'))
+    
+    ax2.view_init(elev=25, azim=55)
+    ax2.zaxis._axinfo['label']['space_factor'] = 2.5
     plt.tight_layout()
     plt.show()
 
@@ -412,3 +469,28 @@ def clip_scalar(x, lo, hi):
         return hi
     else:
         return x
+
+def print_rule_table(rule_table: list, title: str = "Rule Table"):
+    """Pretty print a 7x7 rule table."""
+    labels_in = ["NL", "NM", "NS", "ZO", "PS", "PM", "PL"]
+    print(f"\n{title}:")
+    print("-" * 60)
+    header = "e\\de  " + "  ".join([f"{l:>3}" for l in labels_in])
+    print(header)
+    print("-" * 60)
+    for i, row in enumerate(rule_table):
+        print(f"{labels_in[i]:>4}  " + "  ".join([f"{r:>3}" for r in row]))
+    print("-" * 60)
+
+def warmup_jit(sim_config, simulationMethod):
+    """Warm up JIT compilation."""
+    print("=" * 70)
+    print("WARMING UP JIT COMPILATION...")
+    print("=" * 70)
+    
+    start = time.perf_counter()
+    _ = optimizer.simulation_cost(sim_config=sim_config, warm_up=True, simulationMethod=simulationMethod)
+    elapsed = time.perf_counter() - start
+    
+    print(f"JIT warmup complete in {elapsed:.2f}s")
+    print("=" * 70 + "\n")

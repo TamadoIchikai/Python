@@ -6,27 +6,30 @@ npz_path = f"FuzzyLogicOut/FuzzySugeno_e_Theta_{theta_N}.npz"
 
 e_range  = (-0.1, 0.1)
 de_range = (-1.0, 1.0)
+
+# MAP_VAL from mainFPID.py with 7-label support
+MAP_VAL = {"NL": -1.00, "NM": -0.66, "NS": -0.33, "ZO": 0.00, "PS": 0.33, "PM": 0.66, "PL": 1.00}
  
 ruleTable_dKp = [
-    ["L","L","M","M","S","ZO","ZO"],
-    ["L","M","M","S","ZO","S","ZO"],
-    ["M","M","S","ZO","S","M","M"],
-    ["M","S","ZO","ZO","ZO","S","M"],
-    ["M","S","ZO","S","M","M","L"],
-    ["ZO","S","M","S","M","L","L"],
-    ["ZO","ZO","M","M","L","L","L"],
+    ["PL", "PL", "PM", "PM", "PS", "ZO", "ZO"],
+    ["PL", "PM", "PM", "PS", "ZO", "NS", "ZO"],
+    ["PM", "PM", "PS", "ZO", "NS", "NS", "NM"],
+    ["PM", "PS", "ZO", "NL", "ZO", "PS", "PM"],
+    ["NM", "NS", "NS", "ZO", "PS", "PM", "PM"],
+    ["ZO", "NS", "ZO", "PS", "PM", "PM", "PL"],
+    ["ZO", "ZO", "PS", "PM", "PM", "PL", "PL"],
 ]
 ruleTable_dKd = [
-    ["L","M","M","S","M","M","L"],
-    ["M","S","S","ZO","S","S","M"],
-    ["M","S","ZO","ZO","ZO","S","M"],
-    ["S","ZO","ZO","ZO","ZO","ZO","S"],
-    ["M","S","ZO","ZO","ZO","S","M"],
-    ["M","S","S","ZO","S","S","M"],
-    ["L","M","M","S","M","M","L"],
+    ["PM", "PM", "PM", "PS", "PM", "PM", "PM"],
+    ["PM", "PS", "PS", "ZO", "PS", "PS", "PM"],
+    ["PS", "ZO", "NS", "NL", "NS", "ZO", "PS"],
+    ["ZO", "NL", "NL", "NL", "NL", "NL", "ZO"],
+    ["PS", "ZO", "NS", "NL", "NS", "ZO", "PS"],
+    ["PM", "PS", "PS", "ZO", "PS", "PS", "PM"],
+    ["PM", "PM", "PM", "PS", "PM", "PM", "PM"],
 ]
 
-fs = controller.FuzzySugeno(e_range, de_range, ruleTable_dKp, ruleTable_dKd)
+fs = controller.FuzzySugeno(e_range, de_range, ruleTable_dKp, ruleTable_dKd, map_val=MAP_VAL)
 
 fs.save_npz(theta_N=theta_N, fileNamePath=npz_path or ".", nE=501, nDE=501)
 

@@ -2,6 +2,7 @@ import numpy as np
 from numba import njit
 import scipy.io as sio
 import time
+import PoE.controller as controller
 
 
 @njit(cache=True)
@@ -298,3 +299,86 @@ def print_params_visual(params: np.ndarray):
 
     # Case 3: large even dimension → normal print
     print(p)
+
+# =============================================================================
+# COST FUNCTION WRAPPER
+# =============================================================================
+def simulation_cost_FuzzyPID(sim_config: dict, rule_params: np.ndarray = None, warm_up = False, simulationMethod = None) -> float:
+    """
+    Cost function for GBO optimization.
+    
+    Cost = w_ISE*(ISE_x + ISE_y) + w_ITAE*(ITAE_x + ITAE_y) 
+         + w_IAE*(IAE_x + IAE_y) 
+    
+    Weights affect behavior:
+    - Higher w_ISE:  Faster response, may overshoot
+    - Higher w_ITAE: Better settling, slower initial response
+    - Higher w_IAE:  Balanced tracking
+    - Higher w_ISCO: Smoother control, better noise rejection
+    """
+    if simulationMethod is None:
+        raise ValueError("No simulation method provided")
+
+    if warm_up:
+        default_dkp, default_dkd = controller.get_default_rules()
+        default_params = controller.encode_rules_to_params(default_dkp, default_dkd)
+        kp_const, kd_const = controller.params_to_const_matrices(default_params)
+    elif not warm_up and rule_params is not None:
+        kp_const, kd_const = controller.params_to_const_matrices(rule_params) 
+    else:
+        raise ValueError("Rule parameters not provided")
+
+    # Get config
+    e_range = sim_config['e_range']
+    de_range = sim_config['de_range']
+    
+    # Build lookup tables using existing controller functions
+    mfs_e = controller.gen7tri(e_range[0], e_range[1])
+    mfs_de = controller.gen7tri(de_range[0], de_range[1])
+    
+    nE, nDE = 301, 301  # Reduced resolution for speed
+    e_vec = np.linspace(e_range[0], e_range[1], nE)
+    de_vec = np.linspace(de_range[0], de_range[1], nDE)
+    
+    Y_kp, Y_kd = controller.eval_grid(e_vec, de_vec, mfs_e, mfs_de, kp_const, kd_const)
+
+    fuzzyParams = {
+        'e_vec': e_vec,
+        'de_vec': de_vec,
+        'Y_kp': Y_kp,
+        'Y_kd': Y_kd
+    }
+    
+    # Run simulation
+    posInput_log, posOutput_log, torque_log, tVec = simulationMethod(sim_config, fuzzyParams)
+
+    # Weighted cost combination
+    w_ISE = sim_config['w_ISE']
+    w_ITAE = sim_config['w_ITAE']
+    w_IAE = sim_config['w_IAE']
+    w_U = sim_config['w_U']
+
+    SAMPLE_TIME = sim_config['SAMPLE_TIME']
+
+    # Position error (x, y only)
+    error = posInput_log[:, :2] - posOutput_log[:, :2]   # shape (N, 2)
+    torque_U = np.sum(torque_log**2) * SAMPLE_TIME
+
+    # ISE
+    ISE_x = np.sum(error[:, 0] ** 2) * SAMPLE_TIME
+    ISE_y = np.sum(error[:, 1] ** 2) * SAMPLE_TIME
+
+    # IAE
+    IAE_x = np.sum(np.abs(error[:, 0])) * SAMPLE_TIME
+    IAE_y = np.sum(np.abs(error[:, 1])) * SAMPLE_TIME
+
+    # ITAE (absolute time)
+    ITAE_x = np.sum(tVec * np.abs(error[:, 0])) * SAMPLE_TIME
+    ITAE_y = np.sum(tVec * np.abs(error[:, 1])) * SAMPLE_TIME
+
+    cost = (w_ISE * (ISE_x + ISE_y) + 
+            w_ITAE * (ITAE_x + ITAE_y) + 
+            w_IAE * (IAE_x + IAE_y) + 
+            w_U * torque_U
+            )
+    return cost

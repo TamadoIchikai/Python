@@ -1,6 +1,6 @@
-import os
 import numpy as np
 import PoE.helper as helper
+import PoE.controller as controller
 
 from numba import njit
 from numba.experimental import jitclass
@@ -80,7 +80,7 @@ class FuzzySugeno:
     def __init__(self, e_range, de_range, ruleTable_dKp, ruleTable_dKd, map_val=None):
         self.e_range = e_range
         self.de_range = de_range
-        self.map_val = {"ZO": 0.00, "S": 0.33, "M": 0.66, "L": 1.00} if map_val is None else map_val
+        self.map_val = {"NL": -1.00, "NM": -0.66, "NS": -0.33, "ZO": 0.00, "PS": 0.33, "PM": 0.66, "PL": 1.00} if map_val is None else map_val
 
         # Precompute membership functions
         self.mfs_e = gen7tri(e_range[0], e_range[1])
@@ -523,3 +523,77 @@ def LookUp2D_Bilinear(
     dKp = interp2d_bilinear(e, de, e_vec, de_vec, Ymat_dKp)
     dKd = interp2d_bilinear(e, de, e_vec, de_vec, Ymat_dKd)
     return dKp, dKd
+
+def get_default_rules():
+    """Default rule tables for comparison."""
+    dkp = [
+        ["PL", "PL", "PM", "PM", "PS", "ZO", "ZO"],
+        ["PL", "PM", "PM", "PS", "ZO", "NS", "ZO"],
+        ["PM", "PM", "PS", "ZO", "NS", "NS", "NM"],
+        ["PM", "PS", "ZO", "NL", "ZO", "PS", "PM"],
+        ["NM", "NS", "NS", "ZO", "PS", "PM", "PM"],
+        ["ZO", "NS", "ZO", "PS", "PM", "PM", "PL"],
+        ["ZO", "ZO", "PS", "PM", "PM", "PL", "PL"],
+    ]
+    
+    dkd = [
+        ["PM", "PM", "PM", "PS", "PM", "PM", "PM"],
+        ["PM", "PS", "PS", "ZO", "PS", "PS", "PM"],
+        ["PS", "ZO", "NS", "NL", "NS", "ZO", "PS"],
+        ["ZO", "NL", "NL", "NL", "NL", "NL", "ZO"],
+        ["PS", "ZO", "NS", "NL", "NS", "ZO", "PS"],
+        ["PM", "PS", "PS", "ZO", "PS", "PS", "PM"],
+        ["PM", "PM", "PM", "PS", "PM", "PM", "PM"],
+    ]
+    
+    return dkp, dkd
+
+
+
+def encode_rules_to_params(kp_table: list, kd_table: list) -> np.ndarray:
+    """Convert two 7x7 rule tables to 98 parameters."""
+    label_to_idx = {
+    "NL": 1, "NM": 2, "NS": 3,
+    "ZO": 4,
+    "PS": 5, "PM": 6, "PL": 7
+    }
+    params = np.zeros(98, dtype=np.float64)
+    for i in range(7):
+        for j in range(7):
+            params[i * 7 + j] = label_to_idx[kp_table[i][j]]
+            params[49 + i * 7 + j] = label_to_idx[kd_table[i][j]]
+    return params
+    
+@njit(cache=True)
+def params_to_const_matrices(params: np.ndarray) -> tuple:
+    """Convert 98 parameters to two numeric 7x7 matrices (Numba compatible)."""
+    val_map = np.array([-1.00, -.66, -.33, 0.00, .33, .66, 1.00], dtype=np.float64)
+    kp_mat = np.zeros((7, 7), dtype=np.float64)
+    kd_mat = np.zeros((7, 7), dtype=np.float64)
+    
+    for i in range(49):
+        # dKp part
+        idx_p = int(np.round(params[i]))
+        idx_p = max(1, min(7, idx_p)) - 1
+        kp_mat[i // 7, i % 7] = val_map[idx_p]
+        
+        # dKd part
+        idx_d = int(np.round(params[i + 49]))
+        idx_d = max(1, min(4, idx_d)) - 1
+        kd_mat[i // 7, i % 7] = val_map[idx_d]
+        
+    return kp_mat, kd_mat
+
+def decode_rules_from_params(params: np.ndarray, LABELS_OUT: list) -> tuple:
+    """Convert 98 optimization parameters to two 7x7 rule table strings (dKp, dKd)."""
+    params_int = np.round(params).astype(int)
+    params_int = np.clip(params_int, 1, 7)
+    
+    # Split into 49 and 49
+    kp_indices = params_int[:49].reshape(7, 7)
+    kd_indices = params_int[49:].reshape(7, 7)
+    
+    def to_table(indices):
+        return [[LABELS_OUT[indices[i, j] - 1] for j in range(7)] for i in range(7)]
+
+    return to_table(kp_indices), to_table(kd_indices)
